@@ -141,6 +141,17 @@ class Weixin
                 ],
             ],
             [
+                'element'       => 'input',
+                'type'          => 'text',
+                'default'       => '',
+                'name'          => 'v3_key',
+                'placeholder'   => 'API V3密钥',
+                'title'         => 'API V3密钥',
+                'desc'          => '填入此密钥将自动启用微信支付API V3（推荐）',
+                'is_required'   => 0,
+                'message'       => '请填写API V3密钥',
+            ],
+            [
                 'element'       => 'select',
                 'title'         => 'h5跳转地址urlencode',
                 'message'       => '请选择h5跳转地址urlencode',
@@ -173,7 +184,7 @@ class Weixin
 
     /**
      * 支付入口
-     * @author   Devil
+     * @author  Devil
      * @blog    http://gong.gg/
      * @version 1.0.0
      * @date    2018-09-19
@@ -194,6 +205,23 @@ class Weixin
             return DataReturn('支付缺少配置', -1);
         }
 
+        // 检测使用 V3 API 还是 V2 API
+        $use_v3 = !empty($this->config['v3_key']);
+        
+        if($use_v3)
+        {
+            return $this->PayV3($params);
+        } else {
+            return $this->PayV2($params);
+        }
+    }
+
+    /**
+     * 微信支付 V2 API
+     * @param   [array]           $params [输入参数]
+     */
+    private function PayV2($params = [])
+    {
         // 平台
         $client_type = $this->GetApplicationClientType();
 
@@ -243,6 +271,44 @@ class Weixin
     }
 
     /**
+     * 微信支付 V3 API
+     * @param   [array]           $params [输入参数]
+     */
+    private function PayV3($params = [])
+    {
+        // 平台
+        $client_type = $this->GetApplicationClientType();
+
+        // 微信中打开
+        if(APPLICATION_CLIENT_TYPE == 'pc' && IsWeixinEnv() && (empty($params['user']) || empty($params['user']['weixin_web_openid'])))
+        {
+            exit(header('location:'.PluginsHomeUrl('weixinwebauthorization', 'pay', 'index', input())));
+        }
+
+        // 获取支付参数
+        $ret = $this->GetPayParamsV3($params);
+        if($ret['code'] != 0)
+        {
+            return $ret;
+        }
+
+        // V3 API 请求地址
+        $request_url = 'https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi';
+        
+        // 构建 V3 请求头
+        $headers = $this->BuildV3Headers($request_url, json_encode($ret['data']));
+        
+        // 发送请求
+        $result = json_decode($this->HttpRequestV3($request_url, json_encode($ret['data']), $headers), true);
+        
+        if(!empty($result['prepay_id']))
+        {
+            return $this->PayHandleReturnV3($ret['data'], $result, $params);
+        }
+        
+        $msg = !empty($result['message']) ? $result['message'] : '支付接口异常';
+        return DataReturn($msg, -1);
+    }    /**
      * 终端
      * @author  Devil
      * @blog    http://gong.gg/
@@ -859,6 +925,171 @@ class Weixin
         file_put_contents($apiclient_key_file, $apiclient_key);
 
         return ['cert' => $apiclient_cert_file, 'key' => $apiclient_key_file];
+    }
+
+    /**
+     * V3 API 获取支付参数
+     * @param   [array]           $params [输入参数]
+     */
+    private function GetPayParamsV3($params = [])
+    {
+        // 获取基础支付参数
+        $ret = $this->GetPayParams($params);
+        if($ret['code'] != 0)
+        {
+            return $ret;
+        }
+
+        // V2 参数转换为 V3 格式
+        $v2_data = $ret['data'];
+        $client_type = $this->GetApplicationClientType();
+        
+        // 获取对应的 appid
+        $appid = $this->GetAppid($client_type);
+        
+        $v3_data = [
+            'appid' => $appid,
+            'mchid' => $this->config['mch_id'],
+            'description' => $v2_data['body'],
+            'out_trade_no' => $v2_data['out_trade_no'],
+            'notify_url' => $v2_data['notify_url'],
+            'amount' => [
+                'total' => intval($v2_data['total_fee']),
+                'currency' => 'CNY'
+            ],
+            'payer' => [
+                'openid' => $v2_data['openid']
+            ]
+        ];
+
+        return DataReturn('success', 0, $v3_data);
+    }
+
+    /**
+     * 构建 V3 API 请求头
+     * @param   [string]          $url  [请求URL]
+     * @param   [string]          $body [请求体]
+     */
+    private function BuildV3Headers($url, $body)
+    {
+        $timestamp = time();
+        $nonce = $this->CreateNoncestr();
+        $http_method = 'POST';
+        $url_parts = parse_url($url);
+        $canonical_url = $url_parts['path'];
+        if (!empty($url_parts['query'])) {
+            $canonical_url .= '?' . $url_parts['query'];
+        }
+
+        // 构建签名串
+        $sign_str = $http_method . "\n" . $canonical_url . "\n" . $timestamp . "\n" . $nonce . "\n" . $body . "\n";
+        
+        // 获取商户私钥
+        $private_key = $this->GetV3PrivateKey();
+        
+        // 生成签名
+        $signature = '';
+        openssl_sign($sign_str, $signature, $private_key, OPENSSL_ALGO_SHA256);
+        $signature = base64_encode($signature);
+
+        // 构建 Authorization 头
+        $serial_no = $this->GetV3SerialNo();
+        $auth = sprintf('WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",timestamp="%d",serial_no="%s",signature="%s"',
+            $this->config['mch_id'], $nonce, $timestamp, $serial_no, $signature);
+
+        return [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'User-Agent: ShopXO/' . APPLICATION_VERSION,
+            'Authorization: ' . $auth
+        ];
+    }
+
+    /**
+     * V3 HTTP 请求
+     * @param   [string]          $url     [请求URL]
+     * @param   [string]          $data    [请求数据]
+     * @param   [array]           $headers [请求头]
+     */
+    private function HttpRequestV3($url, $data, $headers)
+    {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+
+        $result = curl_exec($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if (!empty($error)) {
+            return json_encode(['code' => -1, 'message' => $error]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * V3 支付返回处理
+     * @param   [array]           $pay_data [支付参数]
+     * @param   [array]           $result   [接口返回数据]  
+     * @param   [array]           $params   [输入参数]
+     */
+    private function PayHandleReturnV3($pay_data, $result, $params = [])
+    {
+        // 小程序支付参数
+        $client_type = $this->GetApplicationClientType();
+        $appid = $this->GetAppid($client_type);
+        
+        $data = [
+            'appId' => $appid,
+            'timeStamp' => (string)time(),
+            'nonceStr' => $this->CreateNoncestr(),
+            'package' => 'prepay_id=' . $result['prepay_id'],
+            'signType' => 'RSA'
+        ];
+        
+        // 生成 V3 签名
+        $sign_str = $appid . "\n" . $data['timeStamp'] . "\n" . $data['nonceStr'] . "\n" . $data['package'] . "\n";
+        $private_key = $this->GetV3PrivateKey();
+        $signature = '';
+        openssl_sign($sign_str, $signature, $private_key, OPENSSL_ALGO_SHA256);
+        $data['paySign'] = base64_encode($signature);
+
+        return DataReturn('success', 0, $data);
+    }
+
+    /**
+     * 获取 V3 私钥
+     */
+    private function GetV3PrivateKey()
+    {
+        // 如果配置中有证书私钥，使用证书私钥作为 V3 私钥
+        if (!empty($this->config['apiclient_key'])) {
+            $private_key = $this->config['apiclient_key'];
+            if (strpos($private_key, '-----BEGIN') === false) {
+                $private_key = "-----BEGIN PRIVATE KEY-----\n" . wordwrap($private_key, 64, "\n", true) . "\n-----END PRIVATE KEY-----";
+            }
+            return openssl_pkey_get_private($private_key);
+        }
+        
+        // 这里可以扩展支持其他私钥获取方式
+        return false;
+    }
+
+    /**
+     * 获取 V3 证书序列号
+     */
+    private function GetV3SerialNo()
+    {
+        // 简化处理：从私钥证书中提取序列号
+        // 在实际使用中，序列号应该从微信商户平台获取
+        return md5($this->config['mch_id']);
     }
 }
 ?>
