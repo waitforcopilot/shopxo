@@ -34,79 +34,26 @@ class Weixin
      */
     public function __construct($params = [])
     {
-        // 写死的微信支付配置
+        // 只写死 API V3 相关的密钥和证书配置
+        // 其他配置（AppID、商户号、V2密钥等）从现有微信支付插件配置中获取
         $hardcoded_config = [
-            // 开放平台AppID（APP支付用）
-            'app_appid' => 'wx1234567890abcdef', // 请替换为你的开放平台AppID
+            // API V3密钥（启用 V3 API）
+            'v3_id' => '你的32位V3API ID', // 请替换为你的真实V3 API序列号
+            'v3_key' => '你的32位V3API密钥', // 请替换为你的真实V3 API密钥
             
-            // 公众号/服务号AppID
-            'appid' => 'wx1234567890abcdef', // 请替换为你的公众号AppID
-            
-            // 小程序AppID
-            'mini_appid' => 'wx1234567890abcdef', // 请替换为你的小程序AppID
-            
-            // 微信支付商户号
-            'mch_id' => '1234567890', // 请替换为你的商户号
-            
-            // API密钥（V1版本）
-            'key' => 'your_api_key_here_32_characters_long', // 请替换为你的API密钥
-            
-            // API V3密钥（推荐使用）
-            'v3_key' => 'your_v3_api_key_here_32_characters', // 请替换为你的V3 API密钥
-            
-            // 商户证书内容（apiclient_cert.pem）- 退款时必需
+            // 商户证书内容（apiclient_cert.pem）- V3 API 和退款操作必需
             'apiclient_cert' => '-----BEGIN CERTIFICATE-----
-MIIDFjCCAf4CAQAwDQYJKoZIhvcNAQEFBQAwXjELMAkGA1UEBhMCQ04xEzARBgNV
-BAgTCkhlYmVpIFByb3YxEjAQBgNVBAcTCVRhbmdTaGFuTmExDTALBgNVBAoTBFRl
-c3QxFzAVBgNVBAMTDnd3dy50ZXN0LmNvbS5jbjAeFw0yMzA5MDUwMDAwMDBaFw0y
-NDA5MDUwMDAwMDBaMF4xCzAJBgNVBAYTAkNOMRMwEQYDVQQIEwpIZWJlaSBQcm92
-MRIwEAYDVQQHEwlUYW5nU2hhbk5hMQ0wCwYDVQQKEwRUZXN0MRcwFQYDVQQDEw53
-d3cudGVzdC5jb20uY24wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7
-VJTUt9Us8cKBwjgCy/Vqk/Qmg9T+zqA1Q2xPyWr5iB5CXz8N0J2KJV3o4o0nNQf5
-Pk8oPj8bIJ7b8zw+3iQ5q7B3z8rI2/f2V4Q4Y5Z6pG2a8jM2G2F8H5V2wQ4b6nN3
-fRH5P8d5TqN5Z8w7J3T2lJ3g5k4x7Y1e8c0M9WkS
------END CERTIFICATE-----', // 请替换为你的证书内容
+你的证书内容
+-----END CERTIFICATE-----', // 请替换为你的真实证书内容
             
-            // 商户私钥内容（apiclient_key.pem）- 退款时必需
+            // 商户私钥内容（apiclient_key.pem）- V3 API 和退款操作必需
             'apiclient_key' => '-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKB
-wjgCy/Vqk/Qmg9T+zqA1Q2xPyWr5iB5CXz8N0J2KJV3o4o0nNQf5Pk8oPj8bIJ7b
-8zw+3iQ5q7B3z8rI2/f2V4Q4Y5Z6pG2a8jM2G2F8H5V2wQ4b6nN3fRH5P8d5TqN5
-Z8w7J3T2lJ3g5k4x7Y1e8c0M9WkSrX5zZ+dP9L8oPk4wZz3t6Qf5V8Y6R2aG4jH3
-P5d4qJ8nF1o7u2k5bP8v9N3rQ6t0sM2g8jU5nQ7eI3cK9wP5xE6zA1bO8vH5qJz2
-N4g7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt
-AgMBAAECggEAPH7s8QmJ5i+vJzN3rQ7R5bF8X6oP2zL4kX8sN9bE2rA7tJ5kP6yW
-3oQ8m4xE5yNt6Q4n1K5B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO4kR7
-dP6yI3nQ8sF5pM2g7V8jH4z1oQ6R3kT5yE8nP1sF6mA2rQ4B7pK6cL9yF8tO1hE2
-nS5bC8uJ5wQ6eI3cM9wT5xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oP
-2zL4kX8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt6Q4n1K5B+zL4oE3P6qJ7nM8k2L5t
-F6yP9s3K8wE6qN5xT2aO4kR7dP6yI3nQ8sF5pM2g7V8jH4z1oQ6R3kT5yE8nP
-QKBgQDrTJbqL8jQ4x7eG3zW5mP8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt6Q4n1K5
-B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO4kR7dP6yI3nQ8sF5pM2g7V8
-jH4z1oQ6R3kT5yE8nP1sF6mA2rQ4B7pK6cL9yF8tO1hE2nS5bC8uJ5wQ6eI3cM9w
-T5xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oPwKBgQDLKrV6o9Tm1kFn
-8mA2rQ4B7pK6cL9yF8tO1hE2nS5bC8uJ5wQ6eI3cM9wT5xE6zA1bO8vH5qJz2N4g
-7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt6Q4n
-1K5B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO4kR7dP6yI3nQ8sF5pM2g
-7V8jH4z1oQ6R3kT5yE8nPwKBgGVGz8rI2/f2V4Q4Y5Z6pG2a8jM2G2F8H5V2wQ4b
-6nN3fRH5P8d5TqN5Z8w7J3T2lJ3g5k4x7Y1e8c0M9WkSrX5zZ+dP9L8oPk4wZz3t
-6Qf5V8Y6R2aG4jH3P5d4qJ8nF1o7u2k5bP8v9N3rQ6t0sM2g8jU5nQ7eI3cK9wP5
-xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP
-6yW3oQ8m4xE5yNt6Q4n1K5B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO
-4kR7dP6yI3nQ8sF5pM2g7V8jH4z1oQ6R3kT5yE8nPwKBgBCJ8l2M1q5oN6T7kR3
------END PRIVATE KEY-----', // 请替换为你的私钥内容
-            
-            // 异步通知协议设置
-            'agreement' => 1, // 1=默认当前协议, 2=强制https转http协议
-            
-            // H5跳转地址urlencode设置
-            'is_h5_url_encode' => 1, // 1=是, 2=否
-            
-            // H5走NATIVE模式
-            'is_h5_pay_native_mode' => 0, // 0=否, 1=是
+你的私钥内容
+-----END PRIVATE KEY-----', // 请替换为你的真实私钥内容
         ];
         
-        // 将写死的配置与传入的参数合并，传入的参数优先级更高
+        // 将写死的V3配置与传入的插件配置参数合并
+        // 传入的参数（如 appid、mini_appid、mch_id、key 等）优先级更高
         $this->config = array_merge($hardcoded_config, $params);
     }
 
@@ -398,6 +345,46 @@ xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP
             $client_type = 'h5';
         }
         return $client_type;
+    }
+
+    /**
+     * 根据客户端类型获取AppID
+     * @author  GitHub Copilot
+     * @blog    http://gong.gg/
+     * @version 1.0.0
+     * @date    2025-09-05
+     * @desc    针对微信小程序支付获取AppID
+     * @param   [string]    $client_type    [客户端类型]
+     */
+    private function GetAppid($client_type)
+    {
+        // 对于微信小程序，优先使用 mini_appid，否则使用 appid
+        if($client_type == 'weixin' && !empty($this->config['mini_appid']))
+        {
+            return $this->config['mini_appid'];
+        }
+        
+        // 其他情况使用通用 appid
+        return $this->config['appid'];
+    }
+
+    /**
+     * 生成随机字符串
+     * @author  GitHub Copilot
+     * @blog    http://gong.gg/
+     * @version 1.0.0
+     * @date    2025-09-05
+     * @desc    生成指定长度的随机字符串
+     * @param   [int]    $length    [字符串长度，默认32位]
+     */
+    private function CreateNoncestr($length = 32)
+    {
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        $str = '';
+        for ($i = 0; $i < $length; $i++) {
+            $str .= substr($chars, mt_rand(0, strlen($chars) - 1), 1);
+        }
+        return $str;
     }
 
     /**
@@ -1162,7 +1149,8 @@ xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP
     {
         // 简化处理：从私钥证书中提取序列号
         // 在实际使用中，序列号应该从微信商户平台获取
-        return md5($this->config['mch_id']);
+        //return md5($this->config['mch_id']);
+        return $this->config['v3_id'];
     }
 }
 ?>
