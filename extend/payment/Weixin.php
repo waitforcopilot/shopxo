@@ -34,7 +34,80 @@ class Weixin
      */
     public function __construct($params = [])
     {
-        $this->config = $params;
+        // 写死的微信支付配置
+        $hardcoded_config = [
+            // 开放平台AppID（APP支付用）
+            'app_appid' => 'wx1234567890abcdef', // 请替换为你的开放平台AppID
+            
+            // 公众号/服务号AppID
+            'appid' => 'wx1234567890abcdef', // 请替换为你的公众号AppID
+            
+            // 小程序AppID
+            'mini_appid' => 'wx1234567890abcdef', // 请替换为你的小程序AppID
+            
+            // 微信支付商户号
+            'mch_id' => '1234567890', // 请替换为你的商户号
+            
+            // API密钥（V1版本）
+            'key' => 'your_api_key_here_32_characters_long', // 请替换为你的API密钥
+            
+            // API V3密钥（推荐使用）
+            'v3_key' => 'your_v3_api_key_here_32_characters', // 请替换为你的V3 API密钥
+            
+            // 商户证书内容（apiclient_cert.pem）- 退款时必需
+            'apiclient_cert' => '-----BEGIN CERTIFICATE-----
+MIIDFjCCAf4CAQAwDQYJKoZIhvcNAQEFBQAwXjELMAkGA1UEBhMCQ04xEzARBgNV
+BAgTCkhlYmVpIFByb3YxEjAQBgNVBAcTCVRhbmdTaGFuTmExDTALBgNVBAoTBFRl
+c3QxFzAVBgNVBAMTDnd3dy50ZXN0LmNvbS5jbjAeFw0yMzA5MDUwMDAwMDBaFw0y
+NDA5MDUwMDAwMDBaMF4xCzAJBgNVBAYTAkNOMRMwEQYDVQQIEwpIZWJlaSBQcm92
+MRIwEAYDVQQHEwlUYW5nU2hhbk5hMQ0wCwYDVQQKEwRUZXN0MRcwFQYDVQQDEw53
+d3cudGVzdC5jb20uY24wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7
+VJTUt9Us8cKBwjgCy/Vqk/Qmg9T+zqA1Q2xPyWr5iB5CXz8N0J2KJV3o4o0nNQf5
+Pk8oPj8bIJ7b8zw+3iQ5q7B3z8rI2/f2V4Q4Y5Z6pG2a8jM2G2F8H5V2wQ4b6nN3
+fRH5P8d5TqN5Z8w7J3T2lJ3g5k4x7Y1e8c0M9WkS
+-----END CERTIFICATE-----', // 请替换为你的证书内容
+            
+            // 商户私钥内容（apiclient_key.pem）- 退款时必需
+            'apiclient_key' => '-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKB
+wjgCy/Vqk/Qmg9T+zqA1Q2xPyWr5iB5CXz8N0J2KJV3o4o0nNQf5Pk8oPj8bIJ7b
+8zw+3iQ5q7B3z8rI2/f2V4Q4Y5Z6pG2a8jM2G2F8H5V2wQ4b6nN3fRH5P8d5TqN5
+Z8w7J3T2lJ3g5k4x7Y1e8c0M9WkSrX5zZ+dP9L8oPk4wZz3t6Qf5V8Y6R2aG4jH3
+P5d4qJ8nF1o7u2k5bP8v9N3rQ6t0sM2g8jU5nQ7eI3cK9wP5xE6zA1bO8vH5qJz2
+N4g7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt
+AgMBAAECggEAPH7s8QmJ5i+vJzN3rQ7R5bF8X6oP2zL4kX8sN9bE2rA7tJ5kP6yW
+3oQ8m4xE5yNt6Q4n1K5B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO4kR7
+dP6yI3nQ8sF5pM2g7V8jH4z1oQ6R3kT5yE8nP1sF6mA2rQ4B7pK6cL9yF8tO1hE2
+nS5bC8uJ5wQ6eI3cM9wT5xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oP
+2zL4kX8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt6Q4n1K5B+zL4oE3P6qJ7nM8k2L5t
+F6yP9s3K8wE6qN5xT2aO4kR7dP6yI3nQ8sF5pM2g7V8jH4z1oQ6R3kT5yE8nP
+QKBgQDrTJbqL8jQ4x7eG3zW5mP8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt6Q4n1K5
+B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO4kR7dP6yI3nQ8sF5pM2g7V8
+jH4z1oQ6R3kT5yE8nP1sF6mA2rQ4B7pK6cL9yF8tO1hE2nS5bC8uJ5wQ6eI3cM9w
+T5xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oPwKBgQDLKrV6o9Tm1kFn
+8mA2rQ4B7pK6cL9yF8tO1hE2nS5bC8uJ5wQ6eI3cM9wT5xE6zA1bO8vH5qJz2N4g
+7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP6yW3oQ8m4xE5yNt6Q4n
+1K5B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO4kR7dP6yI3nQ8sF5pM2g
+7V8jH4z1oQ6R3kT5yE8nPwKBgGVGz8rI2/f2V4Q4Y5Z6pG2a8jM2G2F8H5V2wQ4b
+6nN3fRH5P8d5TqN5Z8w7J3T2lJ3g5k4x7Y1e8c0M9WkSrX5zZ+dP9L8oPk4wZz3t
+6Qf5V8Y6R2aG4jH3P5d4qJ8nF1o7u2k5bP8v9N3rQ6t0sM2g8jU5nQ7eI3cK9wP5
+xE6zA1bO8vH5qJz2N4g7rM6oE3pK5cL8yF9aJ1dT6oP2zL4kX8sN9bE2rA7tJ5kP
+6yW3oQ8m4xE5yNt6Q4n1K5B+zL4oE3P6qJ7nM8k2L5tF6yP9s3K8wE6qN5xT2aO
+4kR7dP6yI3nQ8sF5pM2g7V8jH4z1oQ6R3kT5yE8nPwKBgBCJ8l2M1q5oN6T7kR3
+-----END PRIVATE KEY-----', // 请替换为你的私钥内容
+            
+            // 异步通知协议设置
+            'agreement' => 1, // 1=默认当前协议, 2=强制https转http协议
+            
+            // H5跳转地址urlencode设置
+            'is_h5_url_encode' => 1, // 1=是, 2=否
+            
+            // H5走NATIVE模式
+            'is_h5_pay_native_mode' => 0, // 0=否, 1=是
+        ];
+        
+        // 将写死的配置与传入的参数合并，传入的参数优先级更高
+        $this->config = array_merge($hardcoded_config, $params);
     }
 
     /**
