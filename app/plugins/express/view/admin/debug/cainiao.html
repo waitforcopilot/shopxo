@@ -1,0 +1,43 @@
+{{:ModuleInclude('public/header')}}
+
+<div class="am-container am-margin-top-lg">
+    <form class="am-form form-validation" action="{{:PluginsAdminUrl('express', 'debug', 'cainiaodebug')}}" method="POST" request-type="ajax-view">
+        <div class="am-alert am-alert-warning am-margin-bottom-0" data-am-alert>
+            <p>1. 请联系菜鸟平台客服获取调试信息及联调权限</p>
+            <p>2. 创建联调应用流程 应用类型 CP接入, 联调类型 线下联调, 报文格式 json, 字符编码 utf-8, 请求URL(随便写一个地址就行), 资源编码(联系菜鸟平台客服获取)</p>
+            <p>3. 输入以下联调信息，进行进行联调、成功后联系菜鸟平台客服开通权限即可。</p>
+            <p>4. 官方联调说明文档 <a href="https://www.yuque.com/fatian/cha2vw/usd727" target="_blank">https://www.yuque.com/fatian/cha2vw/usd727</a></p>
+        </div>
+        <div class="am-form-group">
+            <label>URL地址</label>
+            <input type="url" name="url" placeholder="URL地址" class="am-radius" data-validation-message="请填写URL地址" value="https://link.tbsandbox.com/gateway/link.do" required />
+        </div>
+        <div class="am-form-group">
+            <label>应用appCode</label>
+            <input type="text" name="name" placeholder="应用appCode" class="am-radius" data-validation-message="请填写应用appCode" value="" required />
+        </div>
+        <div class="am-form-group">
+            <label>资源code</label>
+            <input type="text" name="code" placeholder="资源code" class="am-radius" data-validation-message="请填写资源code" value="" required />
+        </div>
+        <div class="am-form-group">
+            <label>AppSecret</label>
+            <input type="text" name="secret" placeholder="AppSecret" class="am-radius" data-validation-message="请填写AppSecret" value="" required />
+        </div>
+        <div class="am-form-group">
+            <label>快递代码<a href="javascript:;" class="submit-popup am-margin-left-sm" data-url="{{:PluginsAdminUrl('express', 'index', 'codes')}}"><span class="am-text-primary">查看菜鸟对应编码 >></span></a></label>
+            <input type="text" name="express_code" placeholder="快递代码" class="am-radius" data-validation-message="请填写快递代码" value="" required />
+        </div>
+        <div class="am-form-group">
+            <label>快递单号</label>
+            <input type="text" name="express_number" placeholder="快递单号" class="am-radius" data-validation-message="请填写快递单号" value="" required />
+        </div>
+
+        <div class="am-form-group am-form-group-refreshing am-margin-top-lg am-padding-left-0">
+            <button type="submit" class="am-btn am-btn-primary am-radius btn-loading-example am-btn-sm am-btn-block" data-am-loading="{loadingText:'{{:MyLang('processing_tips')}}'}">确认联调</button>
+        </div>
+    </form>
+</div>
+        
+<!-- footer start -->
+{{:ModuleInclude('public/footer')}}

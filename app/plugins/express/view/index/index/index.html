@@ -1,0 +1,66 @@
+{{:ModuleInclude('public/header')}}
+
+{{if !empty($data) and !empty($data['data']) and !empty($data['data']['express_info']) and !empty($data['data']['express_data'])}}
+    {{if $data.code eq 0}}
+        <!-- 多个包裹导航 -->
+        {{if count($data['data']['express_data']) gt 1}}
+            <div class="detail-content-nav-switch-tabs">
+                {{foreach $data.data.express_data as $k=>$v}}
+                    <a href="{{:PluginsHomeUrl('express', 'index', 'index', array_merge($params, ['oid'=>$data['data']['order']['id'], 'eid'=>$k]))}}" class="item {{if isset($v['is_active']) and $v['is_active'] eq 1}}am-active{{/if}}" data-key="express-{{$k}}-{{$v.express_id}}">{{$v.show_name}}</a>
+                {{/foreach}}
+            </div>
+        {{/if}}
+        <div class="am-padding-sm">
+            <!-- 基础信息 -->
+            <div class="express-info am-nbfc">
+                <img src="{{$data.data.express_info.icon}}" alt="{{$data.data.express_info.name}}" class="am-img-thumbnail am-radius am-fl" width="60" height="60" />
+                <div class="am-fl am-margin-left-sm">
+                    <p>
+                        <strong>{{$data.data.express_info.name}}</strong>
+                    </p>
+                    {{if !empty($data['data']['express_info']['website_url'])}}
+                        <p>
+                            <a href="{{$data.data.express_info.website_url}}" target="_blank" class="am-text-primary">{{$data.data.express_info.website_url}}</a>
+                        </p>
+                    {{/if}}
+                    <p>
+                        <span class="text-copy-submit">{{$data.data.express_info.number}} <i class="iconfont icon-copy am-color-grey"></i></span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- 备注信息 -->
+            {{if !empty($data['data']['express_info']['note'])}}
+                <p class="am-text-danger am-margin-top-sm">{{$data.data.express_info.note}}</p>
+            {{/if}}
+
+            <!-- 提示信息 -->
+            {{if !empty($data['data']['express_info']['msg'])}}
+                <div class="am-alert">
+                    <p>{{$data.data.express_info.msg}}</p>
+                </div>
+            {{/if}}
+
+            <!-- 快递信息 -->
+            {{if !empty($data['data']['express_info']['data']) and is_array($data['data']['express_info']['data'])}}
+                <ul class="express-data am-margin-top-lg">
+                    {{foreach $data.data.express_info.data as $v}}
+                        <li>
+                            <div class="content">
+                                <i></i>
+                                <p class="desc">{{$v.desc}}</p>
+                                <p class="time am-margin-top-xs">{{$v.time}}</p>
+                            </div>
+                        </li>
+                    {{/foreach}}
+                </ul>
+            {{/if}}
+        </div>
+    {{else /}}
+        {{:ModuleInclude('public/not_data', ['msg'=>$data['data']['express_info']['msg']])}}
+    {{/if}}
+{{else /}}
+    {{:ModuleInclude('public/not_data')}}
+{{/if}}
+
+{{:ModuleInclude('public/footer')}}

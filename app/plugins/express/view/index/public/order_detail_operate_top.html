@@ -1,0 +1,9 @@
+{{if !empty($order_data) and !empty($express_data)}}
+    <div class="am-alert plugins-express-order-detail-alert">
+        <div class="express-icon"></div>
+        <div class="express-content">
+            <p class="title">{{$express_data.desc}}</p>
+            <p class="time">{{$express_data.time}}</p>
+        </div>
+    </div>
+{{/if}}

@@ -1,0 +1,23 @@
+{{:ModuleInclude('public/header')}}
+
+{{if !empty($data)}}
+    <ul data-am-widget="gallery" class="am-gallery am-avg-sm-2 am-avg-md-3 am-avg-lg-4 am-gallery-bordered" data-am-gallery="{}">
+        {{foreach $data as $v}}
+            <li>
+                <div class="am-gallery-item">
+                    <h3 class="am-gallery-title am-margin-top-0">{{$v.display.fullname}}</h3>
+                    <div class="am-gallery-desc">编码：<span class="am-text-primary">{{$v.skey}}</span></div>
+                </div>
+            </li>
+        {{/foreach}}
+    </ul>
+{{else /}}
+    <div class="am-padding-xl am-text-center">
+        <p class="am-margin-top-xl am-text-danger">远程数据获取失败、可以直接访问查看XML数据</p>
+        <p class="am-margin-sm">
+            <a href="http://detail.i56.taobao.com/xml/cpcode_detail_list.xml" target="_blank">查看数据 >></a>
+        </p>
+    </div>
+{{/if}}
+
+{{:ModuleInclude('public/footer')}}

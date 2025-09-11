@@ -1,0 +1,384 @@
+{{:ModuleInclude('public/header')}}
+
+<!-- right content start  -->
+<div class="content-right">
+    <div class="content">
+        <!-- nav -->
+        {{:ModuleInclude('public/plugins_admin_nav', [
+            'plugins'   => 'express',
+            'nav_data'  => $plugins_nav_menu_list,
+        ])}}
+
+        <div class="am-alert" data-am-alert>
+            <button type="button" class="am-close">&times;</button>
+            <p>1. 仅对销售订单有效</p>
+            <p>2. 所有物流数据均存储在数据库、不用担心系统清除缓存会影响物流数据</p>
+        </div>
+
+        <div class="express-content am-padding-bottom-xs">
+            <!-- 基础配置 -->
+            <div class="am-panel am-panel-default am-radius express-content-base">
+                <div class="am-panel-hd">
+                    <span class="am-panel-title">{{:MyLang('base_config_title')}}</span>
+                    <a class="am-margin-left-lg" href="{{:PluginsAdminUrl('express', 'admin', 'saveinfo')}}">
+                        <i class="am-icon-edit"></i>
+                        <span>{{:MyLang('edit_title')}}</span>
+                    </a>
+                </div>
+                <div class="am-panel-bd">
+                    <ul class="am-avg-sm-2 am-avg-md-4 am-avg-lg-4 am-gallery-default">
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>快递类型</label>
+                                <div>
+                                    {{if !empty($data['express_type']) and isset($express_type_list[$data['express_type']])}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$express_type_list[$data['express_type']]}} ]
+                                    {{else /}}
+                                        {{:MyLang('no_setup_tips')}}
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>开启物流查看 - 后台管理</label>
+                                <div>
+                                    {{if isset($data['is_admin_order']) and $data['is_admin_order'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>开启物流查看 - web端</label>
+                                <div>
+                                    {{if isset($data['is_user_web_order']) and $data['is_user_web_order'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>开启物流查看 - 手机端</label>
+                                <div>
+                                    {{if isset($data['is_user_app_order']) and $data['is_user_app_order'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>订单完成限定时间展示物流入口</label>
+                                <div>
+                                    {{if empty($data['order_success_show_button_time'])}}
+                                        {{:MyLang('no_setup_tips')}}、{{:MyLang('default_title')}}[ 43200分钟 ]
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.order_success_show_button_time}}分钟 ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>数据请求间隔时间</label>
+                                <div>
+                                    {{if empty($data['request_interval_time'])}}
+                                        {{:MyLang('no_setup_tips')}}、{{:MyLang('default_title')}}[ 300分钟 ]
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.request_interval_time}}分钟 ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>前置最大时间范围</label>
+                                <div>
+                                    {{if empty($data['first_max_time'])}}
+                                        {{:MyLang('no_setup_tips')}}、{{:MyLang('default_title')}}[ 1440分钟 ]
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.first_max_time}}分钟 ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>默认占位信息</label>
+                                <div class="am-scrollable-vertical">
+                                    {{if empty($data['default_msg'])}}
+                                        {{:MyLang('no_setup_tips')}}、默认空
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.default_msg}} ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>前置占位信息</label>
+                                <div class="am-scrollable-vertical">
+                                    {{if empty($data['first_msg'])}}
+                                        {{:MyLang('no_setup_tips')}}、默认空
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.first_msg}} ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>后置占位信息</label>
+                                <div class="am-scrollable-vertical">
+                                    {{if empty($data['last_msg'])}}
+                                        {{:MyLang('no_setup_tips')}}、默认空
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.last_msg}} ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>存在物流数据占位信息</label>
+                                <div class="am-scrollable-vertical">
+                                    {{if empty($data['exist_msg'])}}
+                                        {{:MyLang('no_setup_tips')}}、默认空
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.exist_msg}} ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>数据完成检测关键字</label>
+                                <div class="am-scrollable-vertical">
+                                    {{if empty($data['success_check_keywords'])}}
+                                        {{:MyLang('no_setup_tips')}}
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ {{$data.success_check_keywords}} ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>订单完成不再请求数据</label>
+                                <div>
+                                    {{if isset($data['is_order_success_not_request']) and $data['is_order_success_not_request'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>订单完成首次也不再请求数据</label>
+                                <div>
+                                    {{if isset($data['is_order_success_first_not_request']) and $data['is_order_success_first_not_request'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>快递编码</label>
+                                <div class="am-scrollable-vertical">
+                                    {{if empty($data['express_codes'])}}
+                                        {{:MyLang('no_setup_tips')}}
+                                    {{else /}}
+                                        {{:MyLang('already_setup_tips')}}[ <a href="javascript:;" data-am-modal="{target: '#express-codes-popup'}">{{:MyLang('view_title')}}</a> ]
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 平台配置 -->
+            <div data-am-widget="tabs" class="am-tabs am-tabs-default am-radius am-margin-horizontal-0 express-content-base" data-am-tabs="{noSwipe: 1}">
+                <ul class="am-tabs-nav am-cf">
+                    <li class="{{if (isset($data['express_type']) and $data['express_type'] eq 'cainiao') or !isset($data['express_type'])}}am-active{{/if}}"><a href="[data-tab-panel-0]">菜鸟</a></li>
+                    <li class="{{if isset($data['express_type']) and $data['express_type'] eq 'kuaidiniao'}}am-active{{/if}}"><a href="[data-tab-panel-1]">快递100</a></li>
+                    <li class="{{if isset($data['express_type']) and $data['express_type'] eq 'kuaidiniao'}}am-active{{/if}}"><a href="[data-tab-panel-2]">快递鸟</a></li>
+                    <li class="{{if isset($data['express_type']) and $data['express_type'] eq 'aliyun'}}am-active{{/if}}"><a href="[data-tab-panel-3]">阿里云全国快递</a></li>
+                </ul>
+                <div class="am-tabs-bd">
+                    <!-- 菜鸟 -->
+                    <div data-tab-panel-0 class="am-tab-panel {{if (isset($data['express_type']) and $data['express_type'] eq 'cainiao') or !isset($data['express_type'])}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口为收费、请先到菜鸟官网注册账户联系客服开通应用权限<a href="https://tech.cainiao.com/" target="_blank" class="am-margin-left-lg">菜鸟科技官网 <i class="am-icon-external-link"></i></a><a href="https://tech.cainiao.com/productv2/productIndex/6" target="_blank" class="am-margin-left-lg">物流详情服务地址 <i class="am-icon-external-link"></i></a><a href="{{:PluginsAdminUrl('express', 'debug', 'cainiao')}}" target="_blank" class="am-margin-left-lg">对接调试 <i class="am-icon-bug"></i></a></p>
+                        </div>
+                        <ul class="am-avg-sm-2 am-avg-md-4 am-avg-lg-4 am-gallery-default">
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>应用appCode</label>
+                                    <div>
+                                        {{if empty($data['cainiao_app_name'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.cainiao_app_name}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>资源code</label>
+                                    <div>
+                                        {{if empty($data['cainiao_app_code'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.cainiao_app_code}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>AppSecret</label>
+                                    <div>
+                                        {{if empty($data['cainiao_app_secret'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.cainiao_app_secret}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- 快递100 -->
+                    <div data-tab-panel-1 class="am-tab-panel {{if isset($data['express_type']) and $data['express_type'] eq 'kuaidi100'}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口均为收费、默认有100条免费查询（以平台最新规则为准）<a href="https://api.kuaidi100.com/extend/register?code=9ed5d63cbeac47b2a12aa98e6240e73d" target="_blank" class="am-margin-left-lg">去开通或购买 <i class="am-icon-external-link"></i></a></p>
+                        </div>
+                        <ul class="am-avg-sm-2 am-avg-md-4 am-avg-lg-4 am-gallery-default">
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>授权KEY</label>
+                                    <div>
+                                        {{if empty($data['kuaidi100_key'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.kuaidi100_key}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>授权码customer</label>
+                                    <div>
+                                        {{if empty($data['kuaidi100_customer'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.kuaidi100_customer}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                    <!-- 快递鸟 -->
+                    <div data-tab-panel-2 class="am-tab-panel {{if isset($data['express_type']) and $data['express_type'] eq 'kuaidiniao'}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口均为收费、免费查询仅支持[ 申通、圆通、百世、天天（500次/天）]（以平台最新规则为准）<a href="http://www.kdniao.com/reg?from=srwG" target="_blank" class="am-margin-left-lg">去开通或购买 <i class="am-icon-external-link"></i></a></p>
+                        </div>
+                        <ul class="am-avg-sm-2 am-avg-md-4 am-avg-lg-4 am-gallery-default">
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>用户ID</label>
+                                    <div>
+                                        {{if empty($data['kuaidiniao_userid'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.kuaidiniao_userid}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>APIkey</label>
+                                    <div>
+                                        {{if empty($data['kuaidiniao_apikey'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.kuaidiniao_apikey}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>RequestType</label>
+                                    <div>
+                                        {{if empty($data['kuaidiniao_request_type'])}}
+                                            {{:MyLang('no_setup_tips')}} {{:MyLang('default_title')}} 1002
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.kuaidiniao_request_type}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                    <!-- 阿里云全国快递 -->
+                    <div data-tab-panel-3 class="am-tab-panel {{if isset($data['express_type']) and $data['express_type'] eq 'aliyun'}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口均为收费、免费查询100次（以平台最新规则为准）<a href="https://market.aliyun.com/apimarket/detail/cmapi021863" target="_blank" class="am-margin-left-lg">去开通或购买 <i class="am-icon-external-link"></i></a></p>
+                        </div>
+                        <ul class="am-avg-sm-2 am-avg-md-4 am-avg-lg-4 am-gallery-default">
+                            <li>
+                                <div class="items am-padding-sm">
+                                    <label>AppCode</label>
+                                    <div>
+                                        {{if empty($data['aliyun_appcode'])}}
+                                            {{:MyLang('no_setup_tips')}}
+                                        {{else /}}
+                                            {{:MyLang('already_setup_tips')}}[ {{$data.aliyun_appcode}} ]
+                                        {{/if}}
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- right content end  -->
+
+<!-- 快递编码  -->
+<div class="am-popup am-radius" id="express-codes-popup">
+    <div class="am-popup-inner">
+        <div class="am-popup-hd">
+            <h4 class="am-popup-title">快递编码</h4>
+            <span data-am-modal-close class="am-close">&times;</span>
+        </div>
+        <div class="am-popup-bd">
+            {{if !empty($data['express_codes']) and !empty($express_list)}}
+                <div class="am-nbfc am-radius">
+                    <ul class="am-list am-list-static am-list-border am-list-striped express-list">
+                        {{foreach $express_list as $v}}
+                            <li>
+                                <p class="name am-text-truncate am-margin-right-lg">{{$v.name}}</p>
+                                <span class="am-margin-left-sm-lg">
+                                    {{if !empty($data['express_codes'][$v['id']])}}
+                                        {{$data.express_codes[$v.id]}}
+                                    {{else /}}
+                                        <span class="am-text-grey">{{:MyLang('no_setup_tips')}}</span>
+                                    {{/if}}
+                                </span>
+                            </li> 
+                        {{/foreach}}
+                    </ul>
+                </div>
+            {{else /}}
+                <div class="am-text-center am-text-warning am-padding-vertical-xl">未配置</div>
+            {{/if}}
+        </div>
+    </div>
+</div>
+        
+<!-- footer start -->
+{{:ModuleInclude('public/footer')}}

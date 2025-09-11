@@ -1,0 +1,219 @@
+{{:ModuleInclude('public/header')}}
+
+<!-- right content start  -->
+<div class="content-right">
+    <div class="content">
+        <!-- nav -->
+        {{:ModuleInclude('public/plugins_admin_nav', [
+            'plugins'   => 'express',
+            'title'     => MyLang('base_config_title'),
+            'back_url'  => PluginsAdminUrl('express', 'admin', 'index'),
+        ])}}
+
+        <!-- form start -->
+        <form class="am-form form-validation am-form-full-screen am-form-popup-sticky" action="{{:PluginsAdminUrl('express', 'admin', 'save')}}" method="POST" request-type="ajax-url" request-value="{{:PluginsAdminUrl('express', 'admin', 'index')}}" enctype="multipart/form-data">
+            <!-- 平台配置 -->
+            <div data-am-widget="tabs" class="am-tabs am-tabs-default am-radius am-margin-horizontal-0" data-am-tabs="{noSwipe: 1}">
+                <ul class="am-tabs-nav am-cf">
+                    <li class="{{if (isset($data['express_type']) and $data['express_type'] eq 'cainiao') or !isset($data['express_type'])}}am-active{{/if}}"><a href="[data-tab-panel-0]">菜鸟</a></li>
+                    <li class="{{if isset($data['express_type']) and $data['express_type'] eq 'kuaidiniao'}}am-active{{/if}}"><a href="[data-tab-panel-1]">快递100</a></li>
+                    <li class="{{if isset($data['express_type']) and $data['express_type'] eq 'kuaidiniao'}}am-active{{/if}}"><a href="[data-tab-panel-2]">快递鸟</a></li>
+                    <li class="{{if isset($data['express_type']) and $data['express_type'] eq 'aliyun'}}am-active{{/if}}"><a href="[data-tab-panel-3]">阿里云全国快递</a></li>
+                </ul>
+                <div class="am-tabs-bd">
+                    <!-- 菜鸟 -->
+                    <div data-tab-panel-0 class="am-tab-panel {{if (isset($data['express_type']) and $data['express_type'] eq 'cainiao') or !isset($data['express_type'])}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口为收费、请先到菜鸟官网注册账户联系客服开通应用权限<a href="https://tech.cainiao.com/" target="_blank" class="am-margin-left-lg">菜鸟科技官网 <i class="am-icon-external-link"></i></a><a href="https://tech.cainiao.com/productv2/productIndex/6" target="_blank" class="am-margin-left-lg">物流详情服务地址 <i class="am-icon-external-link"></i></a><a href="{{:PluginsAdminUrl('express', 'debug', 'cainiao')}}" target="_blank" class="am-margin-left-lg">对接调试 <i class="am-icon-bug"></i></a></p>
+                        </div>
+                        <div class="am-form-group">
+                            <label>应用appCode</label>
+                            <input type="text" name="cainiao_app_name" placeholder="应用appCode" maxlength="60" data-validation-message="应用appCode格式最多 60 个字符" class="am-radius" {{if !empty($data['cainiao_app_name'])}} value="{{$data.cainiao_app_name}}"{{/if}} />
+                        </div>
+                        <div class="am-form-group">
+                            <label>资源code</label>
+                            <input type="text" name="cainiao_app_code" placeholder="资源code" maxlength="80" data-validation-message="资源code格式最多 80 个字符" class="am-radius" {{if !empty($data['cainiao_app_code'])}} value="{{$data.cainiao_app_code}}"{{/if}} />
+                        </div>
+                        <div class="am-form-group">
+                            <label>AppSecret</label>
+                            <input type="text" name="cainiao_app_secret" placeholder="AppSecret" maxlength="100" data-validation-message="AppSecret格式最多 100 个字符" class="am-radius" {{if !empty($data['cainiao_app_secret'])}} value="{{$data.cainiao_app_secret}}"{{/if}} />
+                        </div>
+                    </div>
+                    <!-- 快递100 -->
+                    <div data-tab-panel-1 class="am-tab-panel {{if isset($data['express_type']) and $data['express_type'] eq 'kuaidi100'}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口均为收费、默认有100条免费查询（以平台最新规则为准）<a href="https://api.kuaidi100.com/extend/register?code=9ed5d63cbeac47b2a12aa98e6240e73d" target="_blank" class="am-margin-left-lg">去开通或购买 <i class="am-icon-external-link"></i></a></p>
+                        </div>
+                        <div class="am-form-group">
+                            <label>授权KEY</label>
+                            <input type="text" name="kuaidi100_key" placeholder="授权KEY" maxlength="80" data-validation-message="授权KEY格式最多 80 个字符" class="am-radius" {{if !empty($data['kuaidi100_key'])}} value="{{$data.kuaidi100_key}}"{{/if}} />
+                        </div>
+                        <div class="am-form-group">
+                            <label>授权码customer</label>
+                            <input type="text" name="kuaidi100_customer" placeholder="授权码customer" maxlength="100" data-validation-message="授权码customer格式最多 100 个字符" class="am-radius" {{if !empty($data['kuaidi100_customer'])}} value="{{$data.kuaidi100_customer}}"{{/if}} />
+                        </div>
+                    </div>
+                    <!-- 快递鸟 -->
+                    <div data-tab-panel-2 class="am-tab-panel {{if isset($data['express_type']) and $data['express_type'] eq 'kuaidiniao'}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口均为收费、免费查询仅支持[ 申通、圆通、百世、天天（500次/天）]（以平台最新规则为准）<a href="http://www.kdniao.com/reg?from=srwG" target="_blank" class="am-margin-left-lg">去开通或购买 <i class="am-icon-external-link"></i></a></p>
+                            <p>如购买付费接口则RequestType设置为 <strong class="am-text-danger">8001</strong></p>
+                        </div>
+                        <div class="am-form-group">
+                            <label>用户ID</label>
+                            <input type="text" name="kuaidiniao_userid" placeholder="用户ID" maxlength="80" data-validation-message="用户ID格式最多 80 个字符" class="am-radius" {{if !empty($data['kuaidiniao_userid'])}} value="{{$data.kuaidiniao_userid}}"{{/if}} />
+                        </div>
+                        <div class="am-form-group">
+                            <label>APIkey</label>
+                            <input type="text" name="kuaidiniao_apikey" placeholder="APIkey" maxlength="100" data-validation-message="APIkey格式最多 100 个字符" class="am-radius" {{if !empty($data['kuaidiniao_apikey'])}} value="{{$data.kuaidiniao_apikey}}"{{/if}} />
+                        </div>
+                        <div class="am-form-group">
+                            <label>RequestType</label>
+                            <input type="text" name="kuaidiniao_request_type" placeholder="RequestType" maxlength="100" data-validation-message="RequestType格式最多 100 个字符" class="am-radius" {{if !empty($data['kuaidiniao_request_type'])}} value="{{$data.kuaidiniao_request_type}}"{{/if}} />
+                        </div>
+                    </div>
+                    <!-- 阿里云全国快递 -->
+                    <div data-tab-panel-3 class="am-tab-panel {{if isset($data['express_type']) and $data['express_type'] eq 'aliyun'}}am-active{{/if}}">
+                        <div class="am-alert" data-am-alert>
+                            <p>接口均为收费、免费查询100次（以平台最新规则为准）<a href="https://market.aliyun.com/apimarket/detail/cmapi021863" target="_blank" class="am-margin-left-lg">去开通或购买 <i class="am-icon-external-link"></i></a></p>
+                        </div>
+                        <div class="am-form-group">
+                            <label>AppCode</label>
+                            <input type="text" name="aliyun_appcode" placeholder="AppCode" maxlength="100" data-validation-message="AppCode格式最多 100 个字符" class="am-radius" {{if !empty($data['aliyun_appcode'])}} value="{{$data.aliyun_appcode}}"{{/if}} />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 业务配置 -->
+            <div class="am-panel am-panel-default am-radius">
+                <div class="am-panel-hd">
+                    <h3 class="am-panel-title">业务配置</h3>
+                </div>
+                <div class="am-panel-bd am-padding-vertical-xs">
+                    <div class="am-form-group">
+                        <label>快递类型<span class="am-form-group-label-tips-must">*</span></label>
+                        <div class="am-radio-group">
+                            {{foreach $express_type_list as $v}}
+                                <label class="am-radio-inline am-margin-right-sm">
+                                    <input type="radio" name="express_type" value="{{$v.value}}" {{if isset($data['express_type']) and $data['express_type'] eq $v['value']}}checked="checked"{{/if}} data-validation-message="请选择快递类型" data-am-ucheck required /> {{$v.name}}
+                                </label>
+                            {{/foreach}}
+                        </div>
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">开启物流查看 - 后台管理</label>
+                        <input name="is_admin_order" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_admin_order']) and $data['is_admin_order'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">开启物流查看 - web端</label>
+                        <input name="is_user_web_order" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_user_web_order']) and $data['is_user_web_order'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">开启物流查看 - 手机端</label>
+                        <input name="is_user_app_order" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_user_app_order']) and $data['is_user_app_order'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label>订单完成限定时间展示物流入口<span class="am-form-group-label-tips">0或空则默认30天[ 43200 ]分钟</span></label>
+                        <div class="am-input-group am-input-group-sm">
+                            <input type="number" name="order_success_show_button_time" placeholder="订单完成限定时间展示物流入口" data-validation-message="订单完成限定时间展示物流入口格式有误" class="am-radius" value="{{if !empty($data['order_success_show_button_time'])}}{{$data.order_success_show_button_time}}{{/if}}" />
+                            <span class="am-input-group-btn">
+                                <button type="button" class="am-btn am-btn-default am-radius">{{:MyLang('minute_title')}}</button>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="am-form-group">
+                        <label>数据请求间隔时间<span class="am-form-group-label-tips">0或空则默认5个小时[ 300 ]分钟、可以有效避免频繁请求接口造成浪费</span></label>
+                        <div class="am-input-group am-input-group-sm">
+                            <input type="number" name="request_interval_time" min="0" placeholder="数据请求间隔时间" data-validation-message="数据请求间隔时间格式有误" class="am-radius" value="{{if !empty($data['request_interval_time'])}}{{$data.request_interval_time}}{{/if}}" />
+                            <span class="am-input-group-btn">
+                                <button type="button" class="am-btn am-btn-default am-radius">{{:MyLang('minute_title')}}</button>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="am-form-group">
+                        <label>前置最大时间范围<span class="am-form-group-label-tips">0或空则默认24小时[ 1440 ]分钟、从发货时间开始计算</span></label>
+                        <div class="am-input-group am-input-group-sm">
+                            <input type="number" name="first_max_time" placeholder="前置最大时间范围" data-validation-message="前置最大时间范围格式有误" class="am-radius" value="{{if !empty($data['first_max_time'])}}{{$data.first_max_time}}{{/if}}" />
+                            <span class="am-input-group-btn">
+                                <button type="button" class="am-btn am-btn-default am-radius">{{:MyLang('minute_title')}}</button>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="am-form-group">
+                        <label>默认占位信息<span class="am-form-group-label-tips">无物流信息的时候展示</span></label>
+                        <input type="text" name="default_msg" placeholder="默认占位信息" data-validation-message="默认占位信息格式有误" class="am-radius" value="{{if !empty($data['default_msg'])}}{{$data.default_msg}}{{/if}}" />
+                    </div>
+                    <div class="am-form-group">
+                        <label>前置占位信息<span class="am-form-group-label-tips">无物流信息的时候展示</span></label>
+                        <input type="text" name="first_msg" placeholder="前置占位信息" data-validation-message="前置占位信息格式有误" class="am-radius" value="{{if !empty($data['first_msg'])}}{{$data.first_msg}}{{/if}}" />
+                    </div>
+                    <div class="am-form-group">
+                        <label>后置占位信息<span class="am-form-group-label-tips">无物流信息的时候展示</span></label>
+                        <input type="text" name="last_msg" placeholder="后置占位信息" data-validation-message="后置占位信息格式有误" class="am-radius" value="{{if !empty($data['last_msg'])}}{{$data.last_msg}}{{/if}}" />
+                    </div>
+                    <div class="am-form-group">
+                        <label>存在物流数据占位信息<span class="am-form-group-label-tips">存在物流信息的时候展示</span></label>
+                        <input type="text" name="exist_msg" placeholder="存在物流数据占位信息" data-validation-message="存在物流数据占位信息格式有误" class="am-radius" value="{{if !empty($data['exist_msg'])}}{{$data.exist_msg}}{{/if}}" />
+                    </div>
+                    <div class="am-form-group">
+                        <label>数据完成检测关键字<span class="am-form-group-label-tips">比如：[ 已签收、签收、已完成 ]物流数据最新一条记录包含改关键字则不再远程请求数据、多个关键字为或关系</span></label>
+                        <input type="text" name="success_check_keywords" placeholder="数据完成检测关键字（输入回车）" data-validation-message="请输入数据完成检测关键字" class="am-radius" data-am-tagsinput {{if !empty($data['success_check_keywords'])}}value="{{$data.success_check_keywords}}"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">订单完成不展示占位信息</label>
+                        <input name="is_order_success_not_show_msg" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_order_success_not_show_msg']) and $data['is_order_success_not_show_msg'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">订单完成不再请求数据<span class="am-form-group-label-tips">订单完成后不再远程接口查询数据、不含首次</span></label>
+                        <input name="is_order_success_not_request" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_order_success_not_request']) and $data['is_order_success_not_request'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">订单完成首次也不再请求数据<span class="am-form-group-label-tips">订单完成后首次查询物流也不再远程接口查询数据</span></label>
+                        <input name="is_order_success_first_not_request" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_order_success_first_not_request']) and $data['is_order_success_first_not_request'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                </div>
+            </div>
+
+            <!-- 快递编码 -->
+            <div class="am-panel am-panel-default am-radius">
+                <div class="am-panel-hd">
+                    <h3 class="am-panel-title">快递编码
+                        <a href="javascript:;" class="submit-popup am-margin-left-sm" data-url="{{:PluginsAdminUrl('express', 'index', 'codes')}}"><span class="am-text-primary">查看菜鸟对应编码 >></span></a>
+                        <a href="https://api.kuaidi100.com/manager/openapi/download/kdbm.do" target="_blank" class="am-margin-left-sm"><span class="am-text-primary">下载快递100对应编码 >></span></a>
+                        <a href="http://www.kdniao.com/file/%E5%BF%AB%E9%80%92%E9%B8%9F%E6%8E%A5%E5%8F%A3%E6%94%AF%E6%8C%81%E5%BF%AB%E9%80%92%E5%85%AC%E5%8F%B8%E7%BC%96%E7%A0%81.xlsx" target="_blank" class="am-margin-left-sm"><span class="am-text-primary">下载快递鸟对应编码 >></span></a>
+                        <a href="https://market.aliyun.com/apimarket/detail/cmapi021863" target="_blank" class="am-margin-left-sm"><span class="am-text-primary">阿里云全国快递对应编码 >></span></a>
+                    </h3>
+                </div>
+                <div class="am-panel-bd am-padding-top-xs">
+                    <p class="am-text-warning am-margin-top-xs am-padding-horizontal-xs">请按照业务配置中【快递类型】设置对应的快递编码</p>
+                    {{if !empty($express_list)}}
+                    <ul class="am-list am-list-static am-list-border am-list-striped am-margin-bottom-0 express-list">
+                        {{foreach $express_list as $v}}
+                            <li>
+                                <p class="name am-text-truncate am-margin-right-sm">{{$v.name}}</p>
+                                <input type="text" name="express_codes[{{$v.id}}]" placeholder="快递代号" class="am-radius" value="{{if !empty($data['express_codes']) and isset($data.express_codes[$v.id])}}{{$data.express_codes[$v.id]}}{{/if}}"/>
+                            </li> 
+                        {{/foreach}}
+                    {{/if}}
+                </div>
+            </div>
+
+            <div class="am-form-popup-submit">
+                <a href="{{:PluginsAdminUrl('express', 'admin', 'index', $params)}}" class="am-btn am-btn-warning am-radius am-btn-xs am-margin-right-lg">
+                    <i class="am-icon-mail-reply"></i>
+                    <span>{{:MyLang('retreat_title')}}</span>
+                </a>
+                <button type="submit" class="am-btn am-btn-primary am-radius am-btn-xs btn-loading-example" data-am-loading="{spinner: 'circle-o-notch', loadingText:'{{:MyLang('save_title')}}'}">
+                    <i class="am-icon-save"></i>
+                    <span>{{:MyLang('save_title')}}</span>
+                </button>
+            </div>
+        </form>
+        <!-- form end -->
+    </div>
+</div>
+<!-- right content end  -->
+
+<!-- footer start -->
+{{:ModuleInclude('public/footer')}}
