@@ -84,6 +84,22 @@ class Weixin
             'agreement' => $main_config['agreement'] ?? 1,
             'is_h5_url_encode' => $main_config['is_h5_url_encode'] ?? 1,
             'is_h5_pay_native_mode' => $main_config['is_h5_pay_native_mode'] ?? 0,
+            
+            // 菜鸟配置
+            'cainiao_enabled' => $main_config['cainiao']['enabled'] ?? false,
+            'cainiao_environment' => $main_config['cainiao']['environment'] ?? 'sandbox',
+            'cainiao_app_code' => $main_config['cainiao']['app_code'] ?? '',
+            'cainiao_resource_code' => $main_config['cainiao']['resource_code'] ?? '',
+            'cainiao_app_secret' => $main_config['cainiao']['app_secret'] ?? '',
+            'cainiao_owner_user_id' => $main_config['cainiao']['owner_user_id'] ?? '14544',
+            'cainiao_business_unit_id' => $main_config['cainiao']['business_unit_id'] ?? '',
+            'cainiao_order_type' => $main_config['cainiao']['order_type'] ?? 'BONDED_WHS',
+            'cainiao_order_source' => $main_config['cainiao']['order_source'] ?? '201',
+            'cainiao_store_code' => $main_config['cainiao']['store_code'] ?? 'JIX230',
+            'cainiao_shop_name' => $main_config['cainiao']['shop_name'] ?? 'ShopXO商城',
+            'cainiao_shop_id' => $main_config['cainiao']['shop_id'] ?? '',
+            'cainiao_log_to_db' => $main_config['cainiao']['log_to_db'] ?? true,
+            'cainiao_warehouse_keywords' => $main_config['cainiao']['warehouse_keywords'] ?? ['菜鸟', 'cainiao'],
         ];
         
         // 合并用户传入的参数，但保护重要的V3私钥不被空值覆盖
@@ -2069,6 +2085,10 @@ class Weixin
             {
                 return DataReturn('签名验证错误', -1);
             }
+            
+            // 菜鸟订单下发处理
+            $this->CainiaoOrderNotify($result);
+            
             return DataReturn('支付成功', 0, $this->ReturnData($result));
         }
         return DataReturn('处理异常错误', -100);
@@ -2210,6 +2230,218 @@ class Weixin
         $this->LogV2Sign($params, $sign_string, $signature);
         
         return $signature;
+    }
+
+    /**
+     * 菜鸟订单下发通知
+     * @param array $payment_result 微信支付结果
+     */
+    private function CainiaoOrderNotify($payment_result)
+    {
+        try {
+            // 检查是否启用菜鸟集成
+            if (empty($this->config['cainiao_enabled']) || !$this->config['cainiao_enabled']) {
+                return;
+            }
+            
+            // 检查是否配置菜鸟参数
+            if (empty($this->config['cainiao_resource_code']) || empty($this->config['cainiao_app_secret'])) {
+                return;
+            }
+
+            // 根据订单号获取订单信息
+            $order_no = $payment_result['out_trade_no'];
+            if (empty($order_no)) {
+                return;
+            }
+
+            // 获取订单详情
+            $order = \think\facade\Db::name('Order')->where(['order_no' => $order_no])->find();
+            if (empty($order)) {
+                return;
+            }
+
+            // 获取订单商品信息
+            $order_goods = \think\facade\Db::name('OrderDetail')->where(['order_id' => $order['id']])->select()->toArray();
+            if (empty($order_goods)) {
+                return;
+            }
+
+            // 检查是否为菜鸟仓库订单
+            $is_cainiao_warehouse = $this->CheckCainiaoWarehouse($order_goods);
+            if (!$is_cainiao_warehouse) {
+                return;
+            }
+
+            // 构建菜鸟订单数据
+            $cainiao_data = $this->BuildCainiaoOrderData($order, $order_goods);
+            
+            // 调用菜鸟API
+            $result = $this->SendToCainiao($cainiao_data);
+            
+            // 记录日志
+            $this->LogCainiaoRequest($order_no, $cainiao_data, $result);
+
+        } catch (\Exception $e) {
+            // 记录错误日志但不影响支付流程
+            error_log('菜鸟订单下发异常: ' . $e->getMessage() . ' 订单号: ' . ($order_no ?? ''));
+        }
+    }
+
+    /**
+     * 检查是否为菜鸟仓库
+     * @param array $order_goods 订单商品
+     * @return bool
+     */
+    private function CheckCainiaoWarehouse($order_goods)
+    {
+        // 获取商品的仓库信息
+        foreach ($order_goods as $goods) {
+            // 查询商品仓库信息
+            $warehouse_goods = \think\facade\Db::name('WarehouseGoods')
+                ->alias('wg')
+                ->join('Warehouse w', 'wg.warehouse_id = w.id')
+                ->where(['wg.goods_id' => $goods['goods_id']])
+                ->field('w.name, w.alias, w.is_enable')
+                ->find();
+            
+            // 检查仓库名称或别名是否包含"菜鸟"关键词
+            if (!empty($warehouse_goods) && $warehouse_goods['is_enable'] == 1) {
+                $warehouse_name = strtolower($warehouse_goods['name'] . $warehouse_goods['alias']);
+                if (strpos($warehouse_name, '菜鸟') !== false || strpos($warehouse_name, 'cainiao') !== false) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 构建菜鸟订单数据
+     * @param array $order 订单信息
+     * @param array $order_goods 订单商品
+     * @return array
+     */
+    private function BuildCainiaoOrderData($order, $order_goods)
+    {
+        // 构建商品列表
+        $items = [];
+        foreach ($order_goods as $goods) {
+            $items[] = [
+                'itemId' => (string)$goods['goods_id'],
+                'itemName' => $goods['title'],
+                'itemCode' => $goods['spec'],
+                'quantity' => (int)$goods['buy_number'],
+                'itemPrice' => (float)$goods['price'],
+            ];
+        }
+
+        // 构建收货人信息
+        $receiver = [
+            'name' => $order['receive_name'],
+            'phone' => $order['receive_tel'],
+            'mobile' => $order['receive_tel'],
+            'province' => $order['receive_province_name'] ?? '',
+            'city' => $order['receive_city_name'] ?? '',
+            'area' => $order['receive_county_name'] ?? '',
+            'town' => '',
+            'address' => $order['receive_address'],
+            'zip' => $order['receive_zip'] ?? '',
+        ];
+
+        // 构建菜鸟订单数据
+        $order_data = [
+            'ownerUserId' => $this->config['cainiao_owner_user_id'] ?? '14544',
+            'businessUnitId' => $this->config['cainiao_business_unit_id'] ?? '',
+            'externalOrderCode' => $order['order_no'],
+            'externalTradeCode' => $order['order_no'],
+            'orderType' => $this->config['cainiao_order_type'] ?? 'BONDED_WHS',
+            'storeCode' => $this->config['cainiao_store_code'] ?? 'JIX230',
+            'externalShopId' => $this->config['cainiao_shop_id'] ?? '',
+            'externalShopName' => $this->config['cainiao_shop_name'] ?? 'ShopXO商城',
+            'orderSource' => $this->config['cainiao_order_source'] ?? '201',
+            'orderSubSource' => $this->config['cainiao_order_sub_source'] ?? '',
+            'orderCreateTime' => date('Y-m-d H:i:s', $order['add_time']),
+            'payTime' => date('Y-m-d H:i:s'),
+            'orderFlag' => 'NORMAL',
+            'consigneeName' => $receiver['name'],
+            'consigneePhone' => $receiver['phone'],
+            'consigneeMobile' => $receiver['mobile'],
+            'consigneeAddress' => [
+                'province' => $receiver['province'],
+                'city' => $receiver['city'],
+                'area' => $receiver['area'],
+                'town' => $receiver['town'],
+                'detail' => $receiver['address'],
+            ],
+            'items' => $items,
+            'totalAmount' => (float)$order['total_price'],
+            'actualAmount' => (float)$order['pay_price'],
+        ];
+
+        return $order_data;
+    }
+
+    /**
+     * 发送数据到菜鸟
+     * @param array $order_data 订单数据
+     * @return array
+     */
+    private function SendToCainiao($order_data)
+    {
+        // 构建请求内容
+        $content = json_encode($order_data, JSON_UNESCAPED_UNICODE);
+        
+        // 构建请求参数
+        $request_params = [
+            'msg_type' => 'GLOBAL_SALE_ORDER_NOTIFY',
+            'logistic_provider_id' => $this->config['cainiao_resource_code'],
+            'to_code' => 'GLOBAL_SALE',
+            'logistics_interface' => $content,
+        ];
+
+        // 生成签名
+        $request_params['data_digest'] = base64_encode(md5($content . $this->config['cainiao_app_secret'], true));
+
+        // 发送请求
+        $url = $this->config['cainiao_environment'] === 'sandbox' 
+            ? 'http://linkdaily.tbsandbox.com/gateway/link.do'
+            : 'https://link.cainiao.com/gateway/link.do';
+
+        return $this->HttpRequest($url, http_build_query($request_params));
+    }
+
+    /**
+     * 记录菜鸟请求日志
+     * @param string $order_no 订单号
+     * @param array $request_data 请求数据
+     * @param string $response 响应结果
+     */
+    private function LogCainiaoRequest($order_no, $request_data, $response)
+    {
+        $log_data = [
+            'time' => date('Y-m-d H:i:s'),
+            'order_no' => $order_no,
+            'request' => $request_data,
+            'response' => $response,
+        ];
+        
+        // 记录到日志文件
+        error_log('菜鸟订单下发: ' . json_encode($log_data, JSON_UNESCAPED_UNICODE));
+        
+        // 可选：记录到数据库
+        if (!empty($this->config['cainiao_log_to_db'])) {
+            try {
+                \think\facade\Db::name('CainiaoOrderLog')->insert([
+                    'order_no' => $order_no,
+                    'request_data' => json_encode($request_data, JSON_UNESCAPED_UNICODE),
+                    'response_data' => $response,
+                    'add_time' => time(),
+                ]);
+            } catch (\Exception $e) {
+                // 忽略数据库错误
+            }
+        }
     }
     
     /**
