@@ -1,0 +1,67 @@
+{{:ModuleInclude('public/header')}}
+
+<!-- right content start  -->
+<div class="content-right">
+    <div class="content">
+        <!-- nav -->
+        {{:ModuleInclude('public/plugins_admin_nav', [
+            'plugins'   => 'ordergoodsform',
+            'title'     => MyLang('base_config_title'),
+            'back_url'  => PluginsAdminUrl('ordergoodsform', 'admin', 'index'),
+        ])}}
+
+        <!-- form start -->
+        <form class="am-form form-validation am-form-full-screen am-form-popup-sticky" action="{{:PluginsAdminUrl('ordergoodsform', 'admin', 'save')}}" method="POST" request-type="ajax-url" request-value="{{:PluginsAdminUrl('ordergoodsform', 'admin', 'index')}}" enctype="multipart/form-data">
+            <!-- 基础配置 -->
+            <div class="am-panel am-panel-default am-radius">
+                <div class="am-panel-hd">
+                    <h3 class="am-panel-title">{{:MyLang('base_config_title')}}</h3>
+                </div>
+                <div class="am-panel-bd am-padding-vertical-xs">
+                    <div class="am-form-group">
+                        <label class="am-block">是否开启商品详情页表单（web端）</label>
+                        <input name="is_goods_detail_form" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_goods_detail_form']) and $data['is_goods_detail_form'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">是否开启订单确认页展示（web端）</label>
+                        <div class="am-flex am-flex-items-center am-gap-1">
+                            <input name="is_buy_show" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_buy_show']) and $data['is_buy_show'] eq 1}}checked="true"{{/if}} />
+                            <label class="am-checkbox-inline am-margin-left-lg">
+                                <input type="checkbox" name="is_buy_show_form" value="1" data-am-ucheck {{if isset($data['is_buy_show_form']) and $data['is_buy_show_form'] eq 1}}checked{{/if}} /> 表单
+                            </label>
+                        </div>
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">是否开启订单确认页表单（手机端）</label>
+                        <input name="is_app_buy_form" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_app_buy_form']) and $data['is_app_buy_form'] eq 1}}checked="true"{{/if}} />
+                    </div>
+
+                    <div class="am-form-group">
+                        <label class="am-block">是否开启后台订单列表查看</label>
+                        <input name="is_admin_order_list_operate" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_admin_order_list_operate']) and $data['is_admin_order_list_operate'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                    <div class="am-form-group">
+                        <label class="am-block">是否开启用户端订单列表查看</label>
+                        <input name="is_index_order_list_operate" value="1" type="checkbox" data-off-text="{{:MyLang('no_title')}}" data-on-text="{{:MyLang('yes_title')}}" data-size="xs" data-on-color="success" data-off-color="default" data-handle-width="50" data-am-switch {{if isset($data['is_index_order_list_operate']) and $data['is_index_order_list_operate'] eq 1}}checked="true"{{/if}} />
+                    </div>
+                </div>
+            </div>
+
+            <div class="am-form-popup-submit">
+                <a href="{{:PluginsAdminUrl('ordergoodsform', 'admin', 'index', $params)}}" class="am-btn am-btn-warning am-radius am-btn-xs am-margin-right-lg">
+                    <i class="am-icon-mail-reply"></i>
+                    <span>{{:MyLang('retreat_title')}}</span>
+                </a>
+                <button type="submit" class="am-btn am-btn-primary am-radius am-btn-xs btn-loading-example" data-am-loading="{spinner: 'circle-o-notch', loadingText:'{{:MyLang('save_title')}}'}">
+                    <i class="am-icon-save"></i>
+                    <span>{{:MyLang('save_title')}}</span>
+                </button>
+            </div>
+        </form>
+        <!-- form end -->
+    </div>
+</div>
+<!-- right content end  -->
+
+<!-- footer start -->
+{{:ModuleInclude('public/footer')}}

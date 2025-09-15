@@ -1,0 +1,226 @@
+{{:ModuleInclude('public/header')}}
+
+<!-- right content start  -->
+<div class="content-right">
+	<div class="content">
+        <!-- nav -->
+        {{:ModuleInclude('public/plugins_admin_nav', [
+            'plugins'   => 'ordergoodsform',
+            'title'     => '商品表单'.(empty($data['id']) ? MyLang('created_title') : MyLang('edit_title')),
+            'back_url'  => PluginsAdminUrl('ordergoodsform', 'goodsform', 'index', $params),
+        ])}}
+
+		<!-- form start -->
+		<form class="am-form form-validation am-form-full-screen am-form-popup-fixed" action="{{:PluginsAdminUrl('ordergoodsform', 'goodsform', 'save')}}" method="POST" request-type="ajax-url" request-value="{{:PluginsAdminUrl('ordergoodsform', 'goodsform', 'index', $params)}}" enctype="multipart/form-data">
+			<!-- 基础数据 -->
+            <div class="am-panel am-panel-default am-radius panel-form-container">
+                <div class="am-panel-hd">
+                    <h3 class="am-panel-title">{{:MyLang('form_base_data_title')}}</h3>
+                </div>
+                <div class="am-panel-bd am-padding-vertical-xs">
+                	<div class="am-form-group">
+						<label>名称</label>
+						<input type="text" name="title" placeholder="名称" minlength="2" maxlength="60" data-validation-message="名称格式 2~60 个字符" class="am-radius" value="{{if !empty($data['title'])}}{{$data.title}}{{/if}}" required />
+					</div>
+					{{:ModuleInclude('lib/is_enable')}}
+                </div>
+            </div>
+			<!-- 表单配置 -->
+            <div class="am-panel am-panel-default am-radius panel-form-container">
+                <div class="am-panel-hd">
+                    <h3 class="am-panel-title">表单配置</h3>
+                </div>
+                <div class="am-panel-bd">
+                	<ul class="page-form-container">
+                		{{if !empty($data['config_data_arr']) and is_array($data['config_data_arr'])}}
+                			{{:ModuleInclude('../../../plugins/ordergoodsform/view/admin/goodsform/element', [
+	                            'data'  => $data['config_data_arr'],
+	                        ])}}
+                		{{/if}}
+                	</ul>
+                	<div class="am-margin-top-xs">
+						<span class="business-operations-submit form-goods-poupu-submit" data-type="0">+添加表单</span>
+					</div>
+                </div>
+            </div>
+
+            <!-- 关联商品 -->
+            <div class="am-panel am-panel-default am-radius">
+                <div class="am-panel-hd">
+                    <h3 class="am-panel-title">
+                        <span>关联商品</span>
+                        <span class="am-margin-left-sm am-text-red">不选择商品则全部有效</span>
+                    </h3>
+                </div>
+                <div class="am-panel-bd">
+					<div class="forth-selection-container">
+	                    <div class="forth-selection-form" data-search-url="{{:PluginsAdminUrl('ordergoodsform', 'goodsform', 'goodssearch')}}">
+	                        <select class="am-radius chosen-select forth-selection-form-category" data-placeholder="{{:MyLang('form_goods_category_placeholder')}}" data-validation-message="{{:MyLang('form_goods_category_message')}}">
+	                            <option value="">{{:MyLang('form_goods_category_placeholder')}}</option>
+	                            {{if !empty($goods_category_list)}}
+	                                {{foreach $goods_category_list as $v}}
+	                                    <option value="{{$v.id}}">{{$v.name}}</option>
+	                                    {{if !empty($v['items'])}}
+	                                        {{foreach $v.items as $vs}}
+	                                            <option style="padding-left: 15px;" value="{{$vs.id}}">{{if empty($vs['items'])}}├{{else /}}└{{/if}}² {{$vs.name}}</option>
+	                                            {{if !empty($vs['items'])}}
+	                                                {{foreach $vs.items as $kss=>$vss}}
+	                                                    <option style="padding-left: 30px;" value="{{$vss.id}}">{{if $kss eq count($vs['items'])-1}}└{{else /}}├{{/if}}³ {{$vss.name}}</option>
+	                                                {{/foreach}}
+	                                            {{/if}}
+	                                        {{/foreach}}
+	                                    {{/if}}
+	                                {{/foreach}}
+	                            {{/if}}
+	                        </select>
+	                        <input type="text" placeholder="{{:MyLang('goods_name')}}" class="am-radius forth-selection-form-keywords" />
+                            <button type="button" class="am-btn am-btn-primary-light am-radius am-btn-xs btn-loading-example search-submit" data-am-loading="{spinner: 'circle-o-notch', loadingText:'{{:MyLang('search_title')}}'}">
+                                <i class="iconfont icon-search"></i>
+                                <span>{{:MyLang('search_title')}}</span>
+                            </button>
+	                    </div>
+	                    <div class="forth-selection-list am-margin-top-sm">
+	                        <input type="hidden" name="goods_ids" value="{{if !empty($goods['goods_ids'])}}{{:implode(',', $goods['goods_ids'])}}{{/if}}" data-validation-message="请选择商品" />
+	                        <div class="forth-selection-items am-fl">
+	                            <div class="title">可选</div>
+	                            <ul class="forth-selection-content am-list ul-left">
+	                                <div class="table-no">没有相关数据</div>
+	                            </ul>
+	                        </div>
+	                        <button type="button" class="am-btn am-btn-default am-btn-xs am-radius selected-all">全选 <i class="am-icon-angle-double-right"></i></button>
+	                        <div class="forth-selection-items am-fr">
+	                            <div class="title">已选</div>
+	                            <ul class="forth-selection-content am-list ul-right">
+	                                <div class="table-no {{if !empty($goods['goods'])}}none{{/if}}">没有相关数据</div>
+	                                {{if !empty($goods['goods'])}}
+	                                    {{foreach $goods['goods'] as $v}}
+	                                        <li class="am-animation-slide-bottom items-li-{{$v.id}}">
+	                                            <span class="name" data-value="{{$v.id}}">{{$v.title}}</span>
+	                                            <i class="iconfont icon-delete am-fr"></i>
+	                                        </li>
+	                                    {{/foreach}}
+	                                {{/if}}
+	                            </ul>
+	                        </div>
+	                    </div>
+	                </div>
+                </div>
+            </div>
+
+            <div class="am-form-popup-submit">
+            	<input type="hidden" name="id" {{if !empty($data['id'])}} value="{{$data.id}}"{{/if}} />
+                <a href="{{:PluginsAdminUrl('ordergoodsform', 'goodsform', 'index', $params)}}" class="am-btn am-btn-warning am-radius am-btn-xs am-margin-right-lg">
+                    <i class="am-icon-mail-reply"></i>
+                    <span>{{:MyLang('retreat_title')}}</span>
+                </a>
+                <button type="submit" class="am-btn am-btn-primary am-radius am-btn-xs btn-loading-example" data-am-loading="{spinner: 'circle-o-notch', loadingText:'{{:MyLang('save_title')}}'}">
+                    <i class="am-icon-save"></i>
+                    <span>{{:MyLang('save_title')}}</span>
+                </button>
+            </div>
+		</form>
+        <!-- form end -->
+	</div>
+</div>
+<!-- right content end  -->
+
+<!-- footer start -->
+{{:ModuleInclude('public/footer')}}
+
+<!-- 弹窗表单 -->
+<div class="am-popup popup-not-title" id="goods-form-popup">
+	<div class="am-popup-inner am-radius">
+		<span data-am-modal-close class="am-close am-close-alt">&times;</span>
+		<div class="am-popup-bd am-padding-top-0">
+		  	<form class="am-form form-validation-ordergoodsform-goodsform-popup am-form-popup-fixed" action="{{:PluginsAdminUrl('ordergoodsform', 'goodsform', 'element')}}" method="POST" request-type="ajax-fun" request-value="PopupFormSubmitBack" enctype="multipart/form-data">
+			  	<div class="am-padding-sm">
+					<div class="am-form-group">
+						<label>标题</label>
+						<input type="text" name="title" placeholder="标题" minlength="1" maxlength="30" data-validation-message="标题格式 1~30 个字符" class="am-radius" value="" required />
+					</div>
+					<div class="am-form-group">
+			            <label>元素类型<span class="am-form-group-label-tips">默认 文本</span></label>
+			            <select name="element" class="am-radius chosen-select" data-validation-message="请选择元素类型" required>
+			                {{foreach $document_type_list as $k=>$v}}
+			                    <option value="{{$k}}/{{$v.type}}" {{if isset($v['checked']) and $v['checked'] eq true}}selected{{/if}}>{{$v.name}}</option>
+			                {{/foreach}}
+			            </select>
+			        </div>
+					<div class="am-form-group">
+			            <label>是否必填<span class="am-form-group-label-tips">默认 否</span></label>
+			            <select name="is_required" class="am-radius chosen-select" data-validation-message="请选择是否必填" required>
+			                {{foreach $common_is_text_list as $v}}
+			                    <option value="{{$v.id}}" {{if isset($v['checked']) and $v['checked'] eq true}}selected{{/if}}>{{$v.name}}</option>
+			                {{/foreach}}
+			            </select>
+			        </div>
+			        <div class="am-form-group">
+						<label>限制数据<span class="am-form-group-label-tips">默认 不限制</span></label>
+						<div class="am-g">
+							<div class="am-u-xs-6 am-u-sm-6 am-u-lg-6 am-padding-left-0">
+								<input type="number" name="minlength" min="0" placeholder="最小值" data-validation-message="请填写限制数据最小值" class="am-radius" value="" />
+							</div>
+							<div class="am-u-xs-6 am-u-sm-6 am-u-lg-6 am-padding-right-0">
+								<span class="section-join">-</span>
+								<input type="number" name="maxlength" min="0" placeholder="最大值" data-validation-message="请填写限制数据最大值" class="am-radius" value="" />
+							</div>
+						</div>
+					</div>
+					<div class="am-form-group">
+						<label>占位符内容<span class="am-form-group-label-tips">默认 标题</span></label>
+						<input type="text" name="placeholder" placeholder="占位符内容" maxlength="30" data-validation-message="占位符内容格式最多 30 个字符" class="am-radius" value="" />
+					</div>
+					<div class="am-form-group">
+						<label>提示信息<span class="am-form-group-label-tips">默认 空</span></label>
+						<input type="text" name="tips" placeholder="提示信息" maxlength="60" data-validation-message="提示信息格式最多 60 个字符" class="am-radius" value="" />
+					</div>
+					<div class="am-form-group">
+						<label>错误提示信息<span class="am-form-group-label-tips">默认 请输入{标题名称}</span></label>
+						<input type="text" name="validation_msg" placeholder="错误提示信息" maxlength="60" data-validation-message="错误提示信息格式最多 60 个字符" class="am-radius" value="" />
+					</div>
+					<div class="am-form-group">
+						<label>默认值<span class="am-form-group-label-tips">默认 空</span></label>
+						<input type="text" name="default_value" placeholder="默认值" class="am-radius" value="" />
+					</div>
+				</div>
+
+				<div class="am-form-popup-submit">
+					<input type="hidden" name="id" value="" />
+                    <button type="button" class="am-btn am-btn-warning am-radius am-btn-xs am-margin-right-lg" data-am-modal-close>
+                        <i class="am-icon-paint-brush"></i>
+                        <span>{{:MyLang('cancel_title')}}</span>
+                    </button>
+                    <button type="submit" class="am-btn am-btn-primary am-radius am-btn-xs btn-loading-example" data-am-loading="{spinner: 'circle-o-notch', loadingText:'{{:MyLang('confirm_title')}}'}">
+                        <i class="am-icon-check"></i>
+                        <span>{{:MyLang('confirm_title')}}</span>
+                    </button>
+                </div>
+			</form>
+		</div>
+	</div>
+</div>
+
+<script type="text/javascript">
+// 提交订单回调
+function PopupFormSubmitBack(e)
+{
+	$('form.form-validation-ordergoodsform-goodsform-popup').find('button[type="submit"]').button('reset');
+	$.AMUI.progress.done();
+    if(e.code == 0)
+    {
+        // 弹窗容器
+		var $popup = $('#goods-form-popup');
+		var key = $popup.attr('data-index') || null;
+        // 内容赋值
+		if(key === null)
+		{
+			$('.page-form-container').append(e.data.html);
+		} else {
+			$('.item-form-container-'+e.data.data.id).prop('outerHTML', e.data.html);
+		}
+		$popup.modal('close');
+    } else {
+        Prompt(e.msg);
+    }
+}
+</script>

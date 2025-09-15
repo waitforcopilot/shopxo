@@ -1,0 +1,10 @@
+{{if !empty($config_data)}}
+    <table class="am-table am-table-bordered am-table-compact am-radius">
+        {{foreach $config_data as $v}}
+            <tr>
+                <td width="85">{{$v.title}}</td>
+                <td>{{$v.default_value}}</td>
+            </tr>
+        {{/foreach}}
+    </table>
+{{/if}}

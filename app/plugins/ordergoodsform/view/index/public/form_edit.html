@@ -1,0 +1,31 @@
+{{if !empty($config_data)}}
+    <ul class="plugins-ordergoodsform-goods-detail" data-url="{{:PluginsHomeUrl('ordergoodsform', 'goods', 'save')}}" data-goods-id="{{$goods_id}}">
+        {{foreach $config_data as $v}}
+            <li>
+                <p class="title am-inline-block am-text-truncate">{{$v.title}}</p>
+                <p class="value am-inline-block" data-form-id="{{$v.form_id}}" data-title="{{$v.title}}">
+                    <input type="{{if empty($v['element_arr'])}}text{{else /}}{{$v.element_arr[1]}}{{/if}}" class="am-form-field am-input-sm am-radius" 
+                    placeholder="{{if empty($v['placeholder'])}}{{$v.title}}{{else /}}{{$v.placeholder}}{{/if}}" 
+                    data-validation-message="{{if empty($v['validation_msg'])}}{{$v.error_message}}{{else /}}{{$v.validation_msg}}{{/if}}" 
+                    {{if isset($v['minlength']) and $v['minlength'] gt 0}}
+                        {{if !empty($v['element_arr']) and !empty($v['element_arr'][0]) and $v['element_arr'][0] eq 'number'}}
+                            min="{{$v.minlength}}"
+                        {{else /}}
+                            minlength="{{$v.minlength}}"
+                        {{/if}}
+                    {{/if}} 
+                    {{if isset($v['maxlength']) and $v['maxlength'] gt 0}}
+                        {{if !empty($v['element_arr']) and !empty($v['element_arr'][0]) and $v['element_arr'][0] eq 'number'}}
+                            max="{{$v.maxlength}}"
+                        {{else /}}
+                            maxlength="{{$v.maxlength}}"
+                        {{/if}}
+                    {{/if}} 
+                    {{if !empty($v['element_arr']) and !empty($v['element_arr'][2])}}pattern="{{$v.element_arr[2]}}"{{/if}}
+                    {{if isset($v['is_required']) and $v['is_required'] eq 1}}required{{/if}} 
+                    value="{{if isset($v['default_value'])}}{{$v.default_value}}{{/if}}" />
+                </p>
+            </li>
+        {{/foreach}}
+    </ul>
+{{/if}}

@@ -1,0 +1,37 @@
+{{:ModuleInclude('public/header')}}
+
+<div class="am-padding-sm am-min-height bk-am-color-white">
+    {{if !empty($data)}}
+        {{foreach $data as $v}}
+            <dl class="dl-content am-border-bottom-f8">
+                <dt class="am-text-truncate">商品信息</dt>
+                <dd>
+                    <div class="am-flex am-gap-1">
+                        <a href="{{:MyUrl('index/goods/index', ['id'=>$v['goods_id']])}}" target="_blank">
+                            <img src="{{$v['images']}}" class="am-img-thumbnail am-radius" width="60" height="60" />
+                        </a>
+                        <div class="other am-flex-1 am-flex-width">
+                            <a href="{{:MyUrl('index/goods/index', ['id'=>$v['goods_id']])}}" target="_blank" {{if !empty($v['title_color'])}} style="color:{{$v.title_color}};" {{/if}} class="am-nowrap-initial title">{{$v.title}}</a>
+                            {{if !empty($v['spec_text'])}}
+                                <div class="am-margin-top-xs am-nowrap-initial">{{$v.spec_text}}</div>
+                            {{/if}}
+                            <div class="am-nbfc am-margin-top-xs">
+                                <span>{{$v.currency_data.currency_symbol}}{{$v.price}}x{{$v.buy_number}}</span>
+                            </div>
+                        </div>
+                    </div>
+                </dd>
+                {{if !empty($v['form_data'])}}
+                    {{foreach $v.form_data as $f}}
+                        <dt class="am-text-truncate">{{$f.title}}</dt>
+                        <dd>{{$f.content}}</dd>
+                    {{/foreach}}
+                {{/if}}
+            </dl>
+        {{/foreach}}
+    {{else /}}
+        <div class="table-no"><i class="am-icon-warning"></i> 没有相关数据</div>
+    {{/if}}
+</div>
+
+{{:ModuleInclude('public/footer')}}

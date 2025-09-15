@@ -1,0 +1,21 @@
+{{if !empty($module_data) and  !empty($module_data['data']) and is_array($module_data['data'])}}
+    {{foreach $module_data.data as $v}}
+        <li class="item-form-container-{{$v.id}}">
+            <div class="am-form-group">
+                <label>{{$v.title}}{{if !empty($v['tips'])}}<span class="am-form-group-label-tips">{{$v.tips}}</span>{{/if}}</label>
+                <input type="{{if empty($v['element_arr'])}}text{{else /}}{{$v.element_arr[1]}}{{/if}}" 
+                    placeholder="{{if empty($v['placeholder'])}}{{$v.title}}{{else /}}{{$v.placeholder}}{{/if}}" 
+                    data-validation-message="{{if empty($v['validation_msg'])}}{{$v.error_message}}{{else /}}{{$v.validation_msg}}{{/if}}" 
+                    class="am-radius" 
+                    value="{{$v.default_value}}" 
+                />
+                <input type="hidden" name="popup_name_{{$v.id}}" value="{{:urlencode(json_encode($v, JSON_UNESCAPED_UNICODE))}}" />
+                <div class="goodsform-item-operate">
+                    <i class="am-icon-arrows" title="拖拽排序"></i>
+                    <i class="am-icon-edit form-goods-poupu-submit" title="编辑" data-type="1" data-index="{{$v.id}}"></i>
+                    <i class="am-icon-remove am-text-danger" title="删除"></i>
+                </div>
+            </div>
+        </li>
+    {{/foreach}}
+{{/if}}

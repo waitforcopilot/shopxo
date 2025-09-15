@@ -1,0 +1,70 @@
+<!-- 继承公共的 form -->
+{{extend name="../../../module/view/form_table/detail" /}}
+
+<!-- 重写数据模块 -->
+{{block name="detail_data"}}
+    <!-- 父级内容 -->
+    {__block__}
+
+    <!-- 表单配置 -->
+    <div class="am-panel am-panel-default am-radius">
+        <div class="am-panel-hd">表单配置</div>
+        <div class="am-panel-bd">
+            {{if !empty($data['config_data_arr'])}}
+                <div class="am-scrollable-vertical am-scrollable-horizontal">
+                    <table class="am-table">
+                        <thead>
+                            <tr>
+                                <th>标题</th>
+                                <th>是否必填</th>
+                                <th>限制字符长度</th>
+                                <th>占位符内容</th>
+                                <th>提示信息</th>
+                                <th>错误提示信息</th>
+                                <th>默认值</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{foreach $data.config_data_arr as $v}}
+                                <tr>
+                                    <td>{{$v.title}}</td>
+                                    <td>{{if $v.is_required eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}</td>
+                                    <td>{{:intval($v.minlength)}} - {{:intval($v.maxlength)}}</td>
+                                    <td>{{$v.placeholder}}</td>
+                                    <td>{{$v.tips}}</td>
+                                    <td>{{$v.validation_msg}}</td>
+                                    <td>{{$v.default_value}}</td>
+                                </tr>
+                            {{/foreach}}
+                        </tbody>
+                    </table>
+                </div>
+            {{else /}}
+                {{:ModuleInclude('public/not_data')}}
+            {{/if}}
+        </div>
+    </div>
+
+    <!-- 关联商品 -->
+    <div class="am-panel am-panel-default am-radius">
+        <div class="am-panel-hd">关联商品</div>
+        <div class="am-panel-bd">
+            {{if !empty($data['goods_list'])}}
+                <ul data-am-widget="gallery" class="am-gallery am-avg-sm-6 am-avg-md-8 am-avg-lg-12 am-gallery-bordered" data-am-gallery="{  }" >
+                    {{foreach $data.goods_list as $goods}}
+                        <li>
+                            <div class="am-gallery-item">
+                                <a href="{{$goods.goods_url}}" target="_blank">
+                                    <img src="{{$goods.images}}"  alt="{{$goods.title}}"/>
+                                    <h3 class="am-gallery-title">{{$goods.title}}</h3>
+                                </a>
+                            </div>
+                        </li>
+                    {{/foreach}}
+                </ul>
+            {{else /}}
+                {{:ModuleInclude('public/not_data')}}
+            {{/if}}
+        </div>
+    </div>
+{{/block}}

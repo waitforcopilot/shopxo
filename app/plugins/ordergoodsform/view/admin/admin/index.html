@@ -1,0 +1,76 @@
+{{:ModuleInclude('public/header')}}
+
+<!-- right content start  -->
+<div class="content-right">
+    <div class="content">
+        <!-- nav -->
+        {{:ModuleInclude('public/plugins_admin_nav', [
+            'plugins'   => 'ordergoodsform',
+            'nav_data'  => $plugins_nav_menu_list,
+        ])}}
+
+        <div class="ordergoodsform-content">
+            <!-- 基础配置 -->
+            <div class="am-panel am-radius am-panel-default ordergoodsform-content-base">
+                <div class="am-panel-hd">
+                    <span class="am-panel-title">{{:MyLang('base_config_title')}}</span>
+                    <a class="am-margin-left-lg" href="{{:PluginsAdminUrl('ordergoodsform', 'admin', 'saveinfo')}}">
+                        <i class="am-icon-edit"></i>
+                        <span>{{:MyLang('edit_title')}}</span>
+                    </a>
+                </div>
+                <div class="am-panel-bd">
+                    <ul class="am-avg-sm-2 am-avg-md-4 am-avg-lg-4 am-gallery-default">
+                      <li>
+                            <div class="items am-padding-sm">
+                                <label>是否开启商品详情页表单（web端）</label>
+                                <div>
+                                    {{if isset($data['is_goods_detail_form']) and $data['is_goods_detail_form'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>是否开启订单确认页展示（web端）</label>
+                                <div>
+                                    {{if isset($data['is_buy_show']) and $data['is_buy_show'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                    {{if isset($data['is_buy_show_form']) and $data['is_buy_show_form'] eq 1}}
+                                        <span class="am-badge am-badge-success am-radius am-margin-left-xs">表单</span>
+                                    {{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>是否开启订单确认页表单（手机端）</label>
+                                <div>
+                                    {{if isset($data['is_app_buy_form']) and $data['is_app_buy_form'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>是否开启后台订单列表查看</label>
+                                <div>
+                                    {{if isset($data['is_admin_order_list_operate']) and $data['is_admin_order_list_operate'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="items am-padding-sm">
+                                <label>是否开启用户端订单列表查看</label>
+                                <div>
+                                    {{if isset($data['is_index_order_list_operate']) and $data['is_index_order_list_operate'] eq 1}}{{:MyLang('yes_title')}}{{else /}}{{:MyLang('no_title')}}{{/if}}
+                                </div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- right content end  -->
+
+<!-- footer start -->
+{{:ModuleInclude('public/footer')}}
