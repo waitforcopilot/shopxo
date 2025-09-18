@@ -121,7 +121,7 @@ class Cainiao extends Base
             $cfg = [
                 // 基础配置
                 'enabled'       => true,
-                'environment'   => 'sandbox', // sandbox 或 production
+                'environment'   => 'production', // sandbox 或 production
                 'app_code'      => '102905', // 菜鸟应用 appCode（当前未用于 LINK 提交）
                 'resource_code' => '95f7ac77fd52d162a68eaea5cef3dc55', // logistic_provider_id
                 'app_secret'    => '466aN6F8t0Q6jxiK8GUrFM355mju19j8',
@@ -330,9 +330,8 @@ class Cainiao extends Base
         $totalAmount = (float)($orderRow['total_price'] ?? $sumAmount);
         // 使用订单地址表中的信息作为收件人信息来源
         $receiverTel = $orderAddress['tel'] ?? ($orderRow['tel'] ?? '');
-        $receiverName = $orderAddress['extraction_contact_name']
-            ?? $orderAddress['name']
-            ?? ($orderRow['receive_name'] ?? '收件人');
+        $receiverName = $orderAddress['name'] ?? '收件人';
+            
         $receiverCountry = 'CN';
         $receiverProvince = $orderAddress['province_name'] ?? ($orderRow['receive_province'] ?? '');
         $receiverCity     = $orderAddress['city_name'] ?? ($orderRow['receive_city'] ?? '');
