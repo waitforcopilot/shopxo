@@ -538,8 +538,12 @@ class Common extends BaseController
             $unwanted_power = ['getnodeson', 'node'];
         }
         // 针对菜鸟控制器的发货动作，临时放行（按钮需要直接可用）
-        if (strtolower($this->controller_name) === 'cainiao' && strtolower($this->action_name) === 'cainiaoshipment') {
-            $unwanted_power[] = 'cainiaoshipment';
+        if (strtolower($this->controller_name) === 'cainiao') {
+            $action_name = strtolower($this->action_name);
+            $cainiao_actions = ['cainiaoshipment', 'cainiaoshipmentcancel'];
+            if (in_array($action_name, $cainiao_actions, true)) {
+                $unwanted_power = array_merge($unwanted_power, $cainiao_actions);
+            }
         }
         if(!AdminIsPower($controller, $action, $unwanted_power))
         {

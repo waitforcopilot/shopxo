@@ -118,16 +118,11 @@ class Cainiao extends Base
             $writeLog('INFO', '正在构建菜鸟配置数组');
 
             $writeLog('INFO', '设置基础配置参数');
-            $cfg = [
-                // 基础配置
-                'enabled'       => true,
+            $cfg = array_merge($this->getCainiaoBaseConfig(), [
+                // 基础配置补充
                 'environment'   => 'production', // sandbox 或 production
-                'app_code'      => '102905', // 菜鸟应用 appCode（当前未用于 LINK 提交）
-                'resource_code' => '95f7ac77fd52d162a68eaea5cef3dc55', // logistic_provider_id
-                'app_secret'    => '466aN6F8t0Q6jxiK8GUrFM355mju19j8',
-                'app_name'      => '杭州圣劳诗',
                 'warehouse_name'=> '菜鸟金华义乌综保保税中心仓F1255',
-            ];
+            ]);
             $writeLog('INFO', '基础配置完成');
 
             // 货主/BU 信息
@@ -423,13 +418,19 @@ class Cainiao extends Base
 
         // 6) 组装文档要求的请求数据（logistics_interface）
         $writeLog('INFO', '步骤6: 开始组装请求数据');
+        $externalOrderCode = (string)($orderRow['order_no'] ?? $order_id);
+        $channelSourceCode = isset($cfg['order_source']) ? (string)$cfg['order_source'] : '';
+        if ($channelSourceCode === '') {
+            $channelSourceCode = $externalOrderCode;
+        }
+
         $request_data = [
             'ownerUserId'       => (string)$cfg['owner_user_id'],
-            'externalOrderCode' => (string)($orderRow['order_no'] ?? $order_id),
+            'externalOrderCode' => $externalOrderCode,
             'orderType'         => (string)$cfg['order_type'],
             'storeCode'         => (string)$cfg['store_code'],
             'externalShopName'  => (string)$cfg['shop_name'],
-            'orderSource'       => (string)$cfg['order_source'],
+            'orderSource'       => $channelSourceCode,
             'orderCreateTime'   => $orderCreateTime,
             'orderPayTime'      => $orderPayTime,
             'saleMode'          => (string)$cfg['sale_mode'],
@@ -501,62 +502,32 @@ class Cainiao extends Base
             'request_data' => $request_data
         ]);
 
-        // 7) 组装请求参数
+        // 7) 组装请求参数并调用接口
         $writeLog('INFO', '步骤7: 开始组装API请求参数');
-        $content = json_encode($request_data, JSON_UNESCAPED_UNICODE);
-        $writeLog('INFO', 'JSON序列化完成', ['content_length' => strlen($content)]);
-
-        $request_params = [
-            'msg_type'             => 'GLOBAL_SALE_ORDER_NOTIFY',
-            'logistic_provider_id' => $cpCode,
-            'logistics_interface'  => $content,
-        ];
-        if (!empty($cfg['to_code'])) {
-            $request_params['to_code'] = $cfg['to_code'];
-        }
-        $request_params['data_digest'] = base64_encode(md5($content.$appSecret, true));
+        $apiResult = $this->callCainiaoApi('GLOBAL_SALE_ORDER_NOTIFY', $request_data, $cfg, $writeLog);
+        $request_params = $apiResult['request_params'];
         $writeLog('INFO', '请求参数组装完成', [
-            'msg_type' => $request_params['msg_type'],
-            'logistic_provider_id' => $cpCode,
+            'msg_type' => $request_params['msg_type'] ?? '',
+            'logistic_provider_id' => $request_params['logistic_provider_id'] ?? '',
             'to_code' => $request_params['to_code'] ?? '',
-            'data_digest_length' => strlen($request_params['data_digest'])
+            'data_digest_length' => strlen($request_params['data_digest'] ?? ''),
         ]);
 
         $maskedSecret = substr($appSecret, 0, 4).'****'.substr($appSecret, -4);
         Log::info('[CainiaoShipment] request built', [
             'url_env' => $cfg['environment'],
-            'msg_type' => $request_params['msg_type'],
-            'logistic_provider_id' => $cpCode,
+            'msg_type' => $request_params['msg_type'] ?? '',
+            'logistic_provider_id' => $request_params['logistic_provider_id'] ?? '',
             'to_code' => $request_params['to_code'] ?? '',
-            // 注意：不要直接打印 data_digest 和完整 content 到生产日志；这里仅调试期保留
-            'data_digest_len' => strlen($request_params['data_digest']),
+            'data_digest_len' => strlen($request_params['data_digest'] ?? ''),
             'app_secret_masked' => $maskedSecret,
         ]);
-        Log::debug('[CainiaoShipment] logistics_interface', ['body' => json_encode($request_data, JSON_UNESCAPED_UNICODE)]);
+        Log::debug('[CainiaoShipment] logistics_interface', ['body' => is_array($request_data) ? json_encode($request_data, JSON_UNESCAPED_UNICODE) : $request_data]);
 
-        // 8) 请求菜鸟（按环境切换网关）
-        $writeLog('INFO', '步骤8: 准备发送API请求');
-        $url = ($cfg['environment'] === 'sandbox')
-            ? 'http://linkdaily.tbsandbox.com/gateway/link.do'
-            : 'https://link.cainiao.com/gateway/link.do';
-        $writeLog('INFO', '确定请求URL', ['url' => $url, 'environment' => $cfg['environment']]);
-
-        Log::info('[CainiaoShipment] post url', ['url' => $url]);
-
-        $writeLog('INFO', '======= 菜鸟接口调用开始 =======');
-        $writeLog('INFO', '接口调用前 - 输入参数', [
-            'url' => $url,
-            'request_params' => $request_params
-        ]);
-
-        $writeLog('INFO', '正在发送HTTP请求...');
-        $req_start_time = microtime(true);
-        $res = CurlPost($url, $request_params);
-        $req_duration = round((microtime(true) - $req_start_time) * 1000, 2);
-
-        $writeLog('INFO', '接口调用后 - 返回结果', [
-            'duration_ms' => $req_duration,
-            'response' => $res
+        $writeLog('INFO', '步骤8: 接口调用完成', [
+            'url' => $apiResult['url'],
+            'duration_ms' => $apiResult['duration_ms'],
+            'success_flag' => $apiResult['success_flag'],
         ]);
 
         // 写入数据库日志（记录接口调用历史）
@@ -567,7 +538,7 @@ class Cainiao extends Base
                 'express_number' => $orderRow['order_no'] ?? (string)$order_id,
                 'express_code'   => 'CAINIAO',
                 'request_params' => json_encode($request_params, JSON_UNESCAPED_UNICODE),
-                'response_data'  => json_encode($res, JSON_UNESCAPED_UNICODE),
+                'response_data'  => json_encode($apiResult['response_raw'], JSON_UNESCAPED_UNICODE),
                 'add_time'       => time(),
             ];
             Db::name('PluginsExpressLog')->insertGetId($insert_data);
@@ -580,93 +551,340 @@ class Cainiao extends Base
 
         // 9) 解析返回
         $writeLog('INFO', '步骤9: 开始解析API响应');
-        $writeLog('INFO', 'HTTP响应检查', [
-            'res_is_array' => is_array($res),
-            'res_code' => is_array($res) ? ($res['code'] ?? 'no_code') : 'not_array',
-            'has_data' => is_array($res) ? !empty($res['data']) : false
+        $response = $apiResult['response'];
+        $writeLog('INFO', 'HTTP响应概览', [
+            'success_flag' => $apiResult['success_flag'],
+            'error_code'   => $apiResult['error_code'],
+            'error_msg'    => $apiResult['error_msg'],
+            'response_keys'=> is_array($response) ? array_keys($response) : [],
         ]);
 
-        if (is_array($res) && isset($res['code']) && $res['code'] == 0 && !empty($res['data'])) {
-            $writeLog('INFO', 'HTTP请求成功，开始解析响应数据');
-            $raw = $res['data'];
-            $writeLog('INFO', '原始响应数据', [
-                'raw_type' => gettype($raw),
-                'raw_length' => is_string($raw) ? strlen($raw) : (is_array($raw) ? count($raw) : 'unknown'),
-                'raw_sample' => is_string($raw) ? substr($raw, 0, 200) : 'not_string'
-            ]);
-
-            $response = is_array($raw) ? $raw : json_decode($raw, true);
-            $writeLog('INFO', 'JSON解析结果', [
-                'response_is_array' => is_array($response),
-                'json_error' => json_last_error(),
-                'json_error_msg' => json_last_error_msg()
-            ]);
-
-            if (empty($response) && is_string($raw) && strlen($raw) > 0 && $raw[0] === '<') {
-                $writeLog('INFO', '检测到XML格式响应，尝试XML解析');
-                // XML 兜底
-                if (function_exists('XmlArray')) {
-                    $response = XmlArray($raw);
-                    $writeLog('INFO', 'XML解析完成', ['xml_parsed' => !empty($response)]);
+        if ($apiResult['success']) {
+            $result_data = $response['result'] ?? $response['Result'] ?? [
+                'cnOrderCode'       => $response['cnOrderCode'] ?? null,
+                'externalOrderCode' => $response['externalOrderCode'] ?? null,
+            ];
+            if (is_string($result_data)) {
+                $writeLog('INFO', '结果数据为字符串，尝试JSON解析');
+                $tmp = json_decode($result_data, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $result_data = $tmp;
+                    $writeLog('INFO', '结果数据JSON解析成功');
                 } else {
-                    $writeLog('WARNING', 'XmlArray函数不存在，无法解析XML');
+                    $writeLog('WARNING', '结果数据JSON解析失败', ['error' => json_last_error_msg()]);
                 }
             }
-
-            if (!empty($response)) {
-                $writeLog('INFO', '响应数据解析成功', ['response_keys' => array_keys($response)]);
-                $success = isset($response['success']) ? $response['success'] : (isset($response['Success']) ? $response['Success'] : null);
-                $writeLog('INFO', '检查响应成功标志', ['success_value' => $success, 'success_type' => gettype($success)]);
-
-                if ($success === true || $success === 'true' || $success === 1 || $success === '1') {
-                    $writeLog('INFO', '响应表示成功，提取结果数据');
-                    // 兼容可能的结果字段
-                    $result_data = $response['result'] ?? $response['Result'] ?? [
-                        'cnOrderCode'       => $response['cnOrderCode'] ?? null,
-                        'externalOrderCode' => $response['externalOrderCode'] ?? null,
-                    ];
-                    if (is_string($result_data)) {
-                        $writeLog('INFO', '结果数据为字符串，尝试JSON解析');
-                        $tmp = json_decode($result_data, true);
-                        if (json_last_error() === JSON_ERROR_NONE) {
-                            $result_data = $tmp;
-                            $writeLog('INFO', '结果数据JSON解析成功');
-                        } else {
-                            $writeLog('WARNING', '结果数据JSON解析失败', ['error' => json_last_error_msg()]);
-                        }
-                    }
-                    $writeLog('INFO', '======= 菜鸟接口调用成功 =======', [
-                        'total_duration_ms' => round((microtime(true) - $start_time) * 1000, 2),
-                        'order_id' => $order_id,
-                        'order_no' => $orderRow['order_no'] ?? '',
-                        'result_data' => $result_data
-                    ]);
-                    return ApiService::ApiDataReturn(DataReturn('发货成功', 0, $result_data));
-                }
-                $error_msg = $response['errorMsg'] ?? $response['ErrorMsg'] ?? '发货失败';
-                $writeLog('ERROR', '======= 菜鸟接口调用失败 =======', [
-                    'order_id' => $order_id,
-                    'order_no' => $orderRow['order_no'] ?? '',
-                    'error_msg' => $error_msg,
-                    'full_response' => $response
-                ]);
-                return ApiService::ApiDataReturn(DataReturn($error_msg, -1));
-            } else {
-                $writeLog('ERROR', '响应数据解析失败，数据为空');
-            }
-        } else {
-            $writeLog('ERROR', 'HTTP请求失败或响应格式错误', ['full_response' => $res]);
+            $writeLog('INFO', '======= 菜鸟接口调用成功 =======', [
+                'total_duration_ms' => round((microtime(true) - $start_time) * 1000, 2),
+                'order_id' => $order_id,
+                'order_no' => $orderRow['order_no'] ?? '',
+                'result_data' => $result_data,
+            ]);
+            return ApiService::ApiDataReturn(DataReturn('发货成功', 0, $result_data));
         }
 
-        $error_msg = (is_array($res) && !empty($res['msg'])) ? $res['msg'] : '菜鸟发货接口请求失败';
-        $writeLog('ERROR', '======= 菜鸟接口调用异常 =======', [
-            'total_duration_ms' => round((microtime(true) - $start_time) * 1000, 2),
+        $error_msg = $apiResult['error_msg'] ?: '菜鸟发货接口请求失败';
+        $writeLog('ERROR', '======= 菜鸟接口调用失败 =======', [
             'order_id' => $order_id,
             'order_no' => $orderRow['order_no'] ?? '',
             'error_msg' => $error_msg,
-            'response' => $res
+            'error_code'=> $apiResult['error_code'],
+            'response' => $response,
         ]);
-        return ApiService::ApiDataReturn(DataReturn($error_msg, -1));
+        return ApiService::ApiDataReturn(DataReturn($error_msg, -1, [
+            'error_code' => $apiResult['error_code'],
+            'success'    => $apiResult['success_flag'],
+        ]));
+    }
+
+
+    /**
+     * 取消菜鸟发货
+     * 路由：admin/cainiao/cainiaoshipmentcancel
+     */
+    public function CainiaoShipmentCancel()
+    {
+        $cancel_log_file = root_path('runtime/log') . 'cainiao_cancel_' . date('Y-m-d') . '.log';
+        $cancel_request_id = md5('cancel'.uniqid('', true));
+        $cancelWriteLog = function($level, $message, $data = []) use ($cancel_log_file, $cancel_request_id) {
+            try {
+                $timestamp = date('Y-m-d H:i:s');
+                $json_data = '';
+                if (!empty($data)) {
+                    $json_data = json_encode($data, JSON_UNESCAPED_UNICODE);
+                    if (json_last_error() !== JSON_ERROR_NONE) {
+                        $json_data = 'JSON_ERROR: '.json_last_error_msg();
+                    }
+                }
+                $log_dir = dirname($cancel_log_file);
+                if (!is_dir($log_dir)) {
+                    mkdir($log_dir, 0755, true);
+                }
+                $entry = sprintf('[%s] [%s] [%s] %s %s%s',
+                    $timestamp,
+                    strtoupper($level),
+                    $cancel_request_id,
+                    $message,
+                    $json_data,
+                    PHP_EOL
+                );
+                file_put_contents($cancel_log_file, $entry, FILE_APPEND | LOCK_EX);
+            } catch (\Throwable $e) {
+                Log::error('[CainiaoShipmentCancel] write cancel log failed', [
+                    'error' => $e->getMessage(),
+                    'original_message' => $message,
+                ]);
+            }
+        };
+
+        $cancelWriteLog('INFO', '======== CainiaoShipmentCancel start ========', [
+            'request_params' => $this->data_request,
+            'request_id'     => $cancel_request_id,
+        ]);
+
+        $params   = $this->data_request;
+        $order_id = isset($params['id']) ? intval($params['id']) : 0;
+        if ($order_id <= 0) {
+            $cancelWriteLog('ERROR', 'invalid order id', ['order_id' => $order_id]);
+            return ApiService::ApiDataReturn(DataReturn('参数有误：缺少订单ID', -1));
+        }
+
+        $cancel_reason        = trim($params['reason'] ?? '管理员取消发货');
+        $logistics_order_code = trim($params['logistics_order_code'] ?? '');
+        $cancelWriteLog('INFO', 'basic params parsed', [
+            'order_id' => $order_id,
+            'cancel_reason' => $cancel_reason,
+            'logistics_order_code' => $logistics_order_code,
+        ]);
+
+        try {
+            $orderRow = Db::name('Order')
+                ->field('id, order_no, user_id, pay_time, delivery_time')
+                ->where('id', $order_id)
+                ->find();
+        } catch (\Throwable $e) {
+            Log::error('[CainiaoShipmentCancel] db error', ['order_id' => $order_id, 'ex' => $e->getMessage()]);
+            $cancelWriteLog('ERROR', 'db exception when fetching order', ['error' => $e->getMessage()]);
+            return ApiService::ApiDataReturn(DataReturn('数据库错误：'.$e->getMessage(), -1));
+        }
+
+        if (empty($orderRow)) {
+            Log::warning('[CainiaoShipmentCancel] order not found', ['order_id' => $order_id]);
+            $cancelWriteLog('ERROR', 'order not found', ['order_id' => $order_id]);
+            return ApiService::ApiDataReturn(DataReturn('未找到订单', -1));
+        }
+        $cancelWriteLog('INFO', 'order loaded', ['order' => $orderRow]);
+
+        // 固定配置（优先与发货接口保持一致）
+        $cfg = $this->getCainiaoBaseConfig();
+
+        $cpCode    = trim($cfg['resource_code'] ?? '');
+        $appSecret = trim($cfg['app_secret'] ?? '');
+        if ($cpCode === '' || $appSecret === '') {
+            Log::error('[CainiaoShipmentCancel] missing cpCode/appSecret', ['cfg' => $cfg]);
+            $cancelWriteLog('ERROR', 'config missing cpCode/appSecret', ['cfg' => $cfg]);
+            return ApiService::ApiDataReturn(DataReturn('菜鸟配置参数不完整', -1));
+        }
+        $cancelWriteLog('INFO', 'config ready', ['cpCode' => $cpCode, 'environment' => $cfg['environment']]);
+
+        $orderSource = isset($cfg['order_source']) ? (string)$cfg['order_source'] : '201';
+        $externalOrderCode = (string)($orderRow['order_no'] ?? $order_id);
+        $userId = isset($cfg['owner_user_id']) ? (string)$cfg['owner_user_id'] : '';
+        $extUserId = isset($cfg['shop_id']) ? (string)$cfg['shop_id'] : '';
+
+        $cancelRequest = [
+            'userId'          => $userId,
+            'orderSource'     => $orderSource,
+            'externalOrderId' => $externalOrderCode,
+        ];
+
+        if ($logistics_order_code !== '') {
+            $cancelRequest['lgOrderCode'] = $logistics_order_code;
+        }
+        if ($extUserId !== '') {
+            $cancelRequest['extUserId'] = $extUserId;
+        }
+
+        $extendFields = [];
+        if ($cancel_reason !== '') {
+            $extendFields['cancelReason'] = $cancel_reason;
+        }
+        if (!empty($extendFields)) {
+            $cancelRequest['extendFields'] = $extendFields;
+        }
+
+        $cancel_payload = ['request' => $cancelRequest];
+        $cancelWriteLog('INFO', 'payload assembled', ['payload' => $cancel_payload]);
+
+        $apiResult = $this->callCainiaoApi('GLOBAL_SALE_ORDER_CANCEL', $cancel_payload, $cfg, $cancelWriteLog);
+
+        Log::info('[CainiaoShipmentCancel] request', [
+            'order_id' => $order_id,
+            'order_no' => $orderRow['order_no'] ?? '',
+            'url'      => $apiResult['url'],
+        ]);
+
+        if ($apiResult['success']) {
+            $result_data = $apiResult['response']['result'] ?? $apiResult['response']['Result'] ?? [];
+            if (empty($result_data)) {
+                $result_data = $apiResult['response'];
+            }
+            $cancelWriteLog('INFO', 'cancel success', ['result' => $result_data]);
+            return ApiService::ApiDataReturn(DataReturn('取消发货成功', 0, $result_data));
+        }
+
+        $error_msg = $apiResult['error_msg'] ?: '菜鸟取消发货接口请求失败';
+        Log::warning('[CainiaoShipmentCancel] response error', [
+            'order_id'    => $order_id,
+            'error_code'  => $apiResult['error_code'],
+            'success'     => $apiResult['success_flag'],
+            'error_msg'   => $error_msg,
+            'response'    => $apiResult['response'],
+        ]);
+        $cancelWriteLog('ERROR', 'cancel failed', [
+            'error_msg'   => $error_msg,
+            'error_code'  => $apiResult['error_code'],
+            'success_flag'=> $apiResult['success_flag'],
+            'response_raw'=> $apiResult['response_raw'],
+        ]);
+        return ApiService::ApiDataReturn(DataReturn($error_msg, -1, [
+            'error_code' => $apiResult['error_code'],
+            'success'    => $apiResult['success_flag'],
+        ]));
+    }
+
+
+    /**
+     * 菜鸟基础配置
+     */
+    private function getCainiaoBaseConfig(): array
+    {
+        return [
+            'enabled'       => true,
+            'environment'   => 'production',
+            'app_code'      => '102905',
+            'resource_code' => '95f7ac77fd52d162a68eaea5cef3dc55',
+            'app_secret'    => '466aN6F8t0Q6jxiK8GUrFM355mju19j8',
+            'app_name'      => '杭州圣劳诗',
+            'to_code'       => '',
+            'order_source'  => '201',
+        ];
+    }
+
+
+    /**
+     * 通用的菜鸟接口请求
+     * @param array|string $payload 业务参数（数组会自动 JSON）
+     * @param array $cfg 基础配置
+     * @param callable|null $logger 可选日志函数($level, $message, $context)
+     */
+    private function callCainiaoApi(string $msgType, $payload, array $cfg, ?callable $logger = null): array
+    {
+        $cpCode    = trim($cfg['resource_code'] ?? '');
+        $appSecret = trim($cfg['app_secret'] ?? '');
+
+        $content = is_string($payload) ? $payload : json_encode($payload, JSON_UNESCAPED_UNICODE);
+        if ($logger) {
+            $logger('INFO', '[callCainiaoApi] payload encoded', [
+                'payload_type'   => is_array($payload) ? 'array' : gettype($payload),
+                'content_length' => strlen($content),
+            ]);
+        }
+
+        $request_params = [
+            'msg_type'             => $msgType,
+            'logistic_provider_id' => $cpCode,
+            'logistics_interface'  => $content,
+        ];
+        if (!empty($cfg['to_code'])) {
+            $request_params['to_code'] = $cfg['to_code'];
+        }
+        if ($appSecret !== '') {
+            $request_params['data_digest'] = base64_encode(md5($content.$appSecret, true));
+        } else {
+            $request_params['data_digest'] = '';
+        }
+
+        $environment = strtolower($cfg['environment'] ?? 'production');
+        $url = ($environment === 'sandbox')
+            ? 'http://linkdaily.tbsandbox.com/gateway/link.do'
+            : 'https://link.cainiao.com/gateway/link.do';
+
+        if ($logger) {
+            $logger('INFO', '[callCainiaoApi] request ready', [
+                'msg_type' => $msgType,
+                'url'      => $url,
+                'request_params' => $request_params,
+            ]);
+        }
+
+        $start = microtime(true);
+        $rawResponse = CurlPost($url, $request_params);
+        $duration = round((microtime(true) - $start) * 1000, 2);
+
+        if ($logger) {
+            $logger('INFO', '[callCainiaoApi] response received', [
+                'duration_ms' => $duration,
+                'raw'         => $rawResponse,
+            ]);
+        }
+
+        $responseData = null;
+        $successFlag  = null;
+        $errorCode    = null;
+        $errorMsg     = null;
+
+        if (is_array($rawResponse) && isset($rawResponse['data'])) {
+            $raw = $rawResponse['data'];
+            if (is_array($raw)) {
+                $responseData = $raw;
+            } elseif (is_string($raw)) {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded) && !empty($decoded)) {
+                    $responseData = $decoded;
+                } elseif (strlen($raw) > 0 && $raw[0] === '<') {
+                    if ($logger) {
+                        $logger('INFO', '[callCainiaoApi] try xml parse');
+                    }
+                    try {
+                        $xml = @simplexml_load_string($raw, 'SimpleXMLElement', LIBXML_NOCDATA);
+                        if ($xml !== false) {
+                            $responseData = json_decode(json_encode($xml), true);
+                        }
+                    } catch (\Throwable $e) {
+                        if ($logger) {
+                            $logger('ERROR', '[callCainiaoApi] xml parse failed', ['error' => $e->getMessage()]);
+                        }
+                    }
+                }
+            }
+
+            if (!empty($responseData)) {
+                $successFlag = $responseData['success'] ?? $responseData['Success'] ?? null;
+                $errorCode   = $responseData['errorCode'] ?? $responseData['ErrorCode'] ?? null;
+                $errorMsg    = $responseData['errorMsg'] ?? $responseData['ErrorMsg'] ?? null;
+            }
+
+            if ($errorMsg === null) {
+                $errorMsg = $rawResponse['msg'] ?? null;
+            }
+        } else {
+            $errorMsg = is_array($rawResponse) ? ($rawResponse['msg'] ?? null) : null;
+        }
+
+        $success = in_array($successFlag, [true, 'true', 1, '1'], true);
+
+        return [
+            'url'            => $url,
+            'request_params' => $request_params,
+            'response_raw'   => $rawResponse,
+            'response'       => $responseData ?? [],
+            'success'        => $success,
+            'success_flag'   => $successFlag,
+            'error_code'     => $errorCode,
+            'error_msg'      => $errorMsg,
+            'duration_ms'    => $duration,
+        ];
     }
 
 

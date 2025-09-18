@@ -38,6 +38,10 @@
                     <i class="am-icon-paper-plane"></i>
                     <span>通知菜鸟发货</span>
                 </button>
+                <button type="button" class="am-btn am-btn-danger am-radius am-btn-xs" id="btn-cainiao-shipment-cancel" data-id="{{$data.id}}">
+                    <i class="am-icon-ban"></i>
+                    <span>取消菜鸟发货</span>
+                </button>
                 <button type="submit" class="am-btn am-btn-primary am-radius am-btn-xs btn-loading-example" data-am-loading="{spinner: 'circle-o-notch', loadingText:'{{:MyLang('submit_title')}}'}">
                     <i class="am-icon-save"></i>
                     <span>{{:MyLang('submit_title')}}</span>
@@ -121,7 +125,7 @@ $(document).on('click', '#btn-cainiao-shipment', function() {
 
     $.AMUI.progress.start();
     $.ajax({
-    url: '{{:MyUrl("admin/cainiao/cainiaoshipment")}}',
+        url: '{{:MyUrl("admin/cainiao/cainiaoshipment")}}',
         type: 'POST',
         dataType: 'json',
         data: postData,
@@ -139,6 +143,63 @@ $(document).on('click', '#btn-cainiao-shipment', function() {
             $btn.data('loading', false);
             var msg = (xhr && xhr.responseText) ? xhr.responseText : '网络错误';
             Prompt('通知失败：' + msg, 'danger');
+        }
+    });
+});
+
+// 取消菜鸟发货
+$(document).on('click', '#btn-cainiao-shipment-cancel', function() {
+    var $form = $(this).closest('form');
+    var id = $form.find('input[name="id"]').val();
+
+    if(!id) {
+        Prompt('订单ID缺失，无法取消菜鸟发货', 'danger');
+        return false;
+    }
+
+    var reason = window.prompt('请输入取消原因（可选）', '');
+    if(reason === null) {
+        return false;
+    }
+    reason = $.trim(reason);
+    if(reason === '') {
+        reason = '管理员取消发货';
+    }
+
+    var postData = {
+        id: id,
+        reason: reason
+    };
+
+    var token = $form.find('input[name="token"]').val();
+    if(token) { postData.token = token; }
+
+    var $btn = $(this);
+    if ($btn.data('loading')) {
+        return false;
+    }
+    $btn.data('loading', true);
+
+    $.AMUI.progress.start();
+    $.ajax({
+        url: '{{:MyUrl("admin/cainiao/cainiaoshipmentcancel")}}',
+        type: 'POST',
+        dataType: 'json',
+        data: postData,
+        success: function(res) {
+            $.AMUI.progress.done();
+            $btn.data('loading', false);
+            if(res && res.code === 0) {
+                Prompt(res.msg || '已取消菜鸟发货', 'success');
+            } else {
+                Prompt((res && res.msg) ? res.msg : '取消失败', 'danger');
+            }
+        },
+        error: function(xhr) {
+            $.AMUI.progress.done();
+            $btn.data('loading', false);
+            var msg = (xhr && xhr.responseText) ? xhr.responseText : '网络错误';
+            Prompt('取消失败：' + msg, 'danger');
         }
     });
 });
