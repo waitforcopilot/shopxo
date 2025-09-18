@@ -148,24 +148,16 @@ class Cainiao extends Base
             $cfg['auto_check_warehouse'] = true;
             $cfg['warehouse_keywords'] = ['菜鸟', 'cainiao', '菜鸟仓'];
             $cfg['currency'] = 'CNY';
-            $cfg['pay_channel'] = 'ALIPAY';
+            $cfg['pay_channel'] = 'WEIXINPAY';
             $writeLog('INFO', '其他配置完成');
-
-            // 税费默认值（如实际需要按规则计算，请替换）
-            $cfg['default_customs_tax'] = 0;
-            $cfg['default_consumption_tax'] = 0;
-            $cfg['default_vat'] = 0;
-            $cfg['default_total_tax'] = 0;
-            $cfg['default_insurance'] = 0;
-            $writeLog('INFO', '税费配置完成');
 
             // 发件人信息（如无专用字段，则沿用店铺名/默认值）
             $cfg['sender_name'] = '杭州圣劳诗';
             $cfg['sender_mobile'] = '0571-12345678';
             $cfg['sender_province'] = '浙江省';
-            $cfg['sender_city'] = '杭州市';
-            $cfg['sender_area'] = '西湖区';
-            $cfg['sender_address'] = '云栖小镇';
+            $cfg['sender_city'] = '金华市';
+            $cfg['sender_area'] = '义乌市';
+            $cfg['sender_address'] = '综保保税中心仓F1255';
             $writeLog('INFO', '发件人信息配置完成');
 
             // to_code 部分接口可不填
@@ -260,8 +252,16 @@ class Cainiao extends Base
         }
         $writeLog('INFO', '步骤3: 数据库操作完成');
 
-        // 4) 组装商品项（转换为文档要求的 orderItemList 结构）
-        $writeLog('INFO', '步骤4: 开始组装商品项', ['details_count' => count($details)]);
+        // 4) 金额及税费计算
+        $declareCalc = $this->prepareDeclareAmounts($orderRow, $details, $cfg, $writeLog);
+        $declareSummary = $declareCalc['summary'];
+        $itemTaxShare = $declareCalc['items'];
+        $itemTotals = $declareCalc['item_totals'];
+
+        $writeLog('INFO', '步骤4: 税费及金额计算完成', $declareSummary);
+
+        // 5) 组装商品项（转换为文档要求的 orderItemList 结构）
+        $writeLog('INFO', '步骤5: 开始组装商品项', ['details_count' => count($details)]);
         $items = [];
         $sumCount = 0;
         $sumAmount = 0.0;
@@ -271,7 +271,7 @@ class Cainiao extends Base
                 $title      = $d['title'] ?? '商品';
                 $count      = (int)($d['buy_number'] ?? 1);
                 $price      = (float)($d['price'] ?? 0);
-                $totalPrice = (float)($d['total_price'] ?? ($price * $count));
+                $totalPrice = isset($itemTotals[$index]) ? $itemTotals[$index] : (float)($d['total_price'] ?? ($price * $count));
                 $itemId     = (string)($d['spec_coding'] ?? $d['goods_id'] ?? '');
 
                 $writeLog('INFO', "处理商品 #{$index}", [
@@ -283,16 +283,22 @@ class Cainiao extends Base
                 ]);
 
                 // 声明信息（金额单位存在差异，通常为分，以下以分为单位上送，按需调整）
+                $taxShare = $itemTaxShare[$index] ?? [
+                    'customs_tax' => 0.0,
+                    'consumption_tax' => 0.0,
+                    'vat' => 0.0,
+                    'total_tax' => 0.0,
+                ];
                 $item = [
                     'itemId'       => $itemId,
                     'itemQuantity' => $count,
                     'declareInfo'  => [
-                        'itemTotalPrice'       => (int)round($totalPrice * 100),
-                        'itemTotalActualPrice' => (int)round($totalPrice * 100),
-                        'customsTax'           => (int)$cfg['default_customs_tax'],
-                        'consumptionTax'       => (int)$cfg['default_consumption_tax'],
-                        'vat'                  => (int)$cfg['default_vat'],
-                        'totalTax'             => (int)$cfg['default_total_tax'],
+                        'itemTotalPrice'       => $this->toCent($totalPrice),
+                        'itemTotalActualPrice' => $this->toCent($totalPrice),
+                        'customsTax'           => $this->toCent($taxShare['customs_tax']),
+                        'consumptionTax'       => $this->toCent($taxShare['consumption_tax']),
+                        'vat'                  => $this->toCent($taxShare['vat']),
+                        'totalTax'             => $this->toCent($taxShare['total_tax']),
                     ],
                 ];
                 $items[] = $item;
@@ -301,6 +307,7 @@ class Cainiao extends Base
                 $sumCount  += $count;
                 $sumAmount += $totalPrice;
             }
+            $sumAmount = $declareSummary['goods_total_price'];
             $writeLog('INFO', '所有商品项处理完成', ['total_count' => $sumCount, 'total_amount' => $sumAmount]);
         } else {
             $writeLog('WARNING', '无订单明细，使用默认商品项');
@@ -310,17 +317,17 @@ class Cainiao extends Base
                 'declareInfo'  => [
                     'itemTotalPrice'       => 0,
                     'itemTotalActualPrice' => 0,
-                    'customsTax'           => (int)$cfg['default_customs_tax'],
-                    'consumptionTax'       => (int)$cfg['default_consumption_tax'],
-                    'vat'                  => (int)$cfg['default_vat'],
-                    'totalTax'             => (int)$cfg['default_total_tax'],
+                    'customsTax'           => 0,
+                    'consumptionTax'       => 0,
+                    'vat'                  => 0,
+                    'totalTax'             => 0,
                 ],
             ];
             $sumCount  = 1;
-            $sumAmount = 0.00;
+            $sumAmount = $declareSummary['goods_total_price'];
         }
 
-        // 5) 汇总字段与收件人/发件人
+        // 6) 汇总字段与收件人/发件人
         $itemCount   = (int)($orderRow['buy_number_count'] ?? $sumCount);
         $totalAmount = (float)($orderRow['total_price'] ?? $sumAmount);
         // 使用订单地址表中的信息作为收件人信息来源
@@ -464,15 +471,15 @@ class Cainiao extends Base
             // 结构调整为对象+数组：{"orderItem":[{...},{...}]}
             'orderItemList' => [ 'orderItem' => $items ],
             'orderAmountInfo' => [
-                'dutiablePrice'  => (int)round(($orderRow['total_price'] ?? 0) * 100),
-                'customsTax'     => (int)$cfg['default_customs_tax'],
-                'consumptionTax' => (int)$cfg['default_consumption_tax'],
-                'vat'            => (int)$cfg['default_vat'],
-                'totalTax'       => (int)$cfg['default_total_tax'],
-                'insurance'      => (int)$cfg['default_insurance'],
-                'coupon'         => (int)round(($orderRow['preferential_price'] ?? 0) * 100),
-                'actualPayment'  => (int)round(($orderRow['pay_price'] ?? 0) * 100),
-                'postFee'        => (int)round(($orderRow['express_price'] ?? 0) * 100),
+                'dutiablePrice'  => $this->toCent($declareSummary['dutiable_price']),
+                'customsTax'     => $this->toCent($declareSummary['customs_tax']),
+                'consumptionTax' => $this->toCent($declareSummary['consumption_tax']),
+                'vat'            => $this->toCent($declareSummary['vat']),
+                'totalTax'       => $this->toCent($declareSummary['total_tax']),
+                'insurance'      => $this->toCent($declareSummary['insurance']),
+                'coupon'         => $this->toCent($declareSummary['coupon']),
+                'actualPayment'  => $this->toCent($declareSummary['actual_payment']),
+                'postFee'        => $this->toCent($declareSummary['post_fee']),
                 'currency'       => (string)$cfg['currency'],
             ],
             'customsDeclareInfo' => [
@@ -755,6 +762,212 @@ class Cainiao extends Base
 
 
     /**
+     * 保税订单金额与税费计算
+     */
+    private function prepareDeclareAmounts(array $orderRow, array $details, array $cfg, callable $writeLog): array
+    {
+        $itemTotals = [];
+        $goodsTotal = 0.0;
+
+        foreach ($details as $index => $detail) {
+            $count = (int)($detail['buy_number'] ?? 1);
+            $price = (float)($detail['price'] ?? 0);
+            $lineTotal = $detail['total_price'] ?? ($price * $count);
+            $lineTotal = $this->roundAmount((float)$lineTotal);
+            $itemTotals[$index] = $lineTotal;
+            $goodsTotal += $lineTotal;
+        }
+
+        $goodsTotal = $this->roundAmount($goodsTotal);
+
+        if ($goodsTotal <= 0.0) {
+            $estimate = (float)($orderRow['total_price'] ?? 0) - (float)($orderRow['express_price'] ?? 0);
+            if ($estimate > 0) {
+                $goodsTotal = $this->roundAmount($estimate);
+            }
+        }
+
+        $postFee = $this->roundAmount((float)($orderRow['express_price'] ?? 0));
+        $insurance = $this->roundAmount($this->extractInsuranceAmount($orderRow, $cfg));
+        $coupon = $this->roundAmount((float)($orderRow['preferential_price'] ?? 0));
+        $actualPayment = $this->roundAmount((float)($orderRow['pay_price'] ?? 0));
+
+        $dutiablePrice = $this->roundAmount($goodsTotal + $postFee + $insurance);
+
+        $rates = $this->resolveTaxRates($orderRow, $cfg);
+        $discount = $rates['discount'];
+
+        $customsTax = $this->roundAmount($dutiablePrice * $rates['customs'] * $discount);
+
+        $consumptionTax = 0.0;
+        if ($rates['consumption'] > 0 && $rates['consumption'] < 1) {
+            $base = $dutiablePrice + $customsTax;
+            $consumptionTax = $this->roundAmount(($base * $rates['consumption'] / (1 - $rates['consumption'])) * $discount);
+        } elseif ($rates['consumption'] >= 1) {
+            $writeLog('WARNING', '消费税税率配置异常，已忽略消费税计算', $rates);
+        }
+
+        $vat = $this->roundAmount(($dutiablePrice + $customsTax + $consumptionTax) * $rates['vat'] * $discount);
+        $totalTax = $this->roundAmount($customsTax + $consumptionTax + $vat);
+        $expectedPayment = $this->roundAmount($dutiablePrice + $totalTax - $coupon);
+        $validPayment = abs($expectedPayment - $actualPayment) <= 0.05;
+
+        if (!$validPayment) {
+            $writeLog('WARNING', '实付金额校验未通过', [
+                'expected' => $expectedPayment,
+                'actual' => $actualPayment,
+                'difference' => $this->roundAmount($expectedPayment - $actualPayment),
+            ]);
+        }
+
+        $itemShares = [];
+        if ($goodsTotal > 0 && !empty($itemTotals)) {
+            $itemSharesCustoms = $this->allocateTaxAmounts($customsTax, $itemTotals, $goodsTotal);
+            $itemSharesConsumption = $this->allocateTaxAmounts($consumptionTax, $itemTotals, $goodsTotal);
+            $itemSharesVat = $this->allocateTaxAmounts($vat, $itemTotals, $goodsTotal);
+            foreach ($itemTotals as $index => $total) {
+                $itemShares[$index] = [
+                    'customs_tax' => $itemSharesCustoms[$index] ?? 0.0,
+                    'consumption_tax' => $itemSharesConsumption[$index] ?? 0.0,
+                    'vat' => $itemSharesVat[$index] ?? 0.0,
+                    'total_tax' => $this->roundAmount(($itemSharesCustoms[$index] ?? 0.0)
+                        + ($itemSharesConsumption[$index] ?? 0.0)
+                        + ($itemSharesVat[$index] ?? 0.0)),
+                ];
+            }
+        }
+
+        return [
+            'summary' => [
+                'goods_total_price' => $goodsTotal,
+                'post_fee' => $postFee,
+                'insurance' => $insurance,
+                'dutiable_price' => $dutiablePrice,
+                'customs_tax' => $customsTax,
+                'consumption_tax' => $consumptionTax,
+                'vat' => $vat,
+                'total_tax' => $totalTax,
+                'coupon' => $coupon,
+                'actual_payment' => $actualPayment,
+                'expected_payment' => $expectedPayment,
+                'discount' => $discount,
+                'rates' => $rates,
+                'valid_payment' => $validPayment,
+            ],
+            'items' => $itemShares,
+            'item_totals' => $itemTotals,
+        ];
+    }
+
+
+    /**
+     * 税率解析，订单字段优先
+     */
+    private function resolveTaxRates(array $orderRow, array $cfg): array
+    {
+        $ratesCfg = $cfg['tax_rates'] ?? [];
+        $rates = [
+            'customs' => isset($ratesCfg['customs']) ? (float)$ratesCfg['customs'] : 0.0,
+            'consumption' => isset($ratesCfg['consumption']) ? (float)$ratesCfg['consumption'] : 0.0,
+            'vat' => isset($ratesCfg['vat']) ? (float)$ratesCfg['vat'] : 0.0,
+            'discount' => isset($cfg['tax_discount']) ? (float)$cfg['tax_discount'] : 1.0,
+        ];
+
+        $orderOverrides = [
+            'customs' => $orderRow['customs_tax_rate'] ?? ($orderRow['customs_taxrate'] ?? null),
+            'consumption' => $orderRow['consumption_tax_rate'] ?? ($orderRow['consumption_taxrate'] ?? null),
+            'vat' => $orderRow['vat_rate'] ?? ($orderRow['vatrate'] ?? null),
+            'discount' => $orderRow['bonded_discount'] ?? ($orderRow['discount'] ?? null),
+        ];
+
+        foreach ($orderOverrides as $key => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $rates[$key] = (float)$value;
+        }
+
+        if ($rates['discount'] <= 0) {
+            $rates['discount'] = 1.0;
+        }
+
+        return $rates;
+    }
+
+
+    /**
+     * 提取订单保险金额，支持配置字段
+     */
+    private function extractInsuranceAmount(array $orderRow, array $cfg): float
+    {
+        if (isset($orderRow['insurance_price'])) {
+            return (float)$orderRow['insurance_price'];
+        }
+        if (isset($orderRow['insurance'])) {
+            return (float)$orderRow['insurance'];
+        }
+        if (!empty($cfg['insurance_field']) && isset($orderRow[$cfg['insurance_field']])) {
+            return (float)$orderRow[$cfg['insurance_field']];
+        }
+        return isset($cfg['default_insurance']) ? (float)$cfg['default_insurance'] : 0.0;
+    }
+
+
+    /**
+     * 按比例分摊税费（保留两位小数并保证合计一致）
+     */
+    private function allocateTaxAmounts(float $totalAmount, array $itemTotals, float $goodsTotal): array
+    {
+        $allocations = [];
+        $running = 0.0;
+        $lastKey = null;
+        foreach ($itemTotals as $key => $value) {
+            $lastKey = $key;
+        }
+
+        foreach ($itemTotals as $key => $value) {
+            if ($totalAmount <= 0 || $goodsTotal <= 0 || $value <= 0) {
+                $allocations[$key] = 0.0;
+                continue;
+            }
+
+            if ($key === $lastKey) {
+                $allocations[$key] = $this->roundAmount($totalAmount - $running);
+            } else {
+                $ratio = $value / $goodsTotal;
+                $current = $this->roundAmount($totalAmount * $ratio);
+                $allocations[$key] = $current;
+                $running = $this->roundAmount($running + $current);
+            }
+        }
+
+        if ($lastKey !== null && !isset($allocations[$lastKey])) {
+            $allocations[$lastKey] = $this->roundAmount($totalAmount - $running);
+        }
+
+        return $allocations;
+    }
+
+
+    /**
+     * 金额转分
+     */
+    private function toCent($amount): int
+    {
+        return (int)round(((float)$amount) * 100);
+    }
+
+
+    /**
+     * 金额标准化（保留两位小数）
+     */
+    private function roundAmount($amount): float
+    {
+        return round((float)$amount, 2);
+    }
+
+
+    /**
      * 菜鸟基础配置
      */
     private function getCainiaoBaseConfig(): array
@@ -768,6 +981,17 @@ class Cainiao extends Base
             'app_name'      => '杭州圣劳诗',
             'to_code'       => '',
             'order_source'  => '201',
+            // 税率及折扣配置，可根据业务线灵活调整（示例：0.05 即 5%）
+            'tax_rates'     => [
+                'customs'     => 0.0,    // 关税税率 0%
+                'consumption' => 0.15,   // 消费税税率 15%
+                'vat'         => 0.13,   // 增值税税率 13%
+            ],
+            'tax_discount'       => 1.0,   // 折扣（例如海关减免系数）
+
+            // 保险金额兼容配置，优先读取订单字段，其次使用默认值
+            'default_insurance'  => 0.0,
+            'insurance_field'    => '',
         ];
     }
 
