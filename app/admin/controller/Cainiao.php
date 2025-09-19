@@ -12,6 +12,7 @@ namespace app\admin\controller;
 
 use app\admin\controller\Base;
 use app\service\ApiService;
+use app\service\CainiaoConfigService;
 use think\facade\Db;
 use think\facade\Log;
 
@@ -117,51 +118,32 @@ class Cainiao extends Base
             // 2) 菜鸟配置（按你提供的 wxconfig.php 硬编码）
             $writeLog('INFO', '正在构建菜鸟配置数组');
 
-            $writeLog('INFO', '设置基础配置参数');
-            $cfg = array_merge($this->getCainiaoBaseConfig(), [
-                // 基础配置补充
-                'environment'   => 'production', // sandbox 或 production
-                'warehouse_name'=> '菜鸟金华义乌综保保税中心仓F1255',
+            $cfg = array_merge(CainiaoConfigService::BaseConfig(), [
+                'environment'    => 'production',
+                'warehouse_name' => '菜鸟金华义乌综保保税中心仓F1255',
+                'log_to_db'      => true,
+                'auto_check_warehouse' => true,
+                'warehouse_keywords'   => ['菜鸟', 'cainiao', '菜鸟仓'],
+                'currency'       => 'CNY',
+                'pay_channel'    => 'WEIXINPAY',
             ]);
-            $writeLog('INFO', '基础配置完成');
 
-            // 货主/BU 信息
-            $cfg['owner_user_id'] = '2220576876930';
-            $cfg['business_unit_id'] = 'B06738021'; // 多BU场景下使用
-            $writeLog('INFO', '货主信息配置完成');
-
-            // 订单配置
-            $cfg['order_type'] = 'BONDED_WHS';
-            $cfg['order_source'] = '201';
+            $cfg['owner_user_id']    = '2220576876930';
+            $cfg['business_unit_id'] = 'B06738021';
+            $cfg['order_type']       = 'BONDED_WHS';
+            $cfg['order_source']     = '201';
             $cfg['order_sub_source'] = '';
-            $cfg['sale_mode'] = '1'; // 1-线上
-            $writeLog('INFO', '订单配置完成');
+            $cfg['sale_mode']        = '1';
+            $cfg['store_code']       = 'YWZ806';
+            $cfg['shop_name']        = '杭州圣劳诗';
+            $cfg['shop_id']          = '杭州圣劳诗';
+            $cfg['sender_name']      = '杭州圣劳诗';
+            $cfg['sender_mobile']    = '0571-12345678';
+            $cfg['sender_province']  = '浙江省';
+            $cfg['sender_city']      = '杭州市';
+            $cfg['sender_area']      = '西湖区';
+            $cfg['sender_address']   = '云栖小镇';
 
-            // 仓库/店铺
-            $cfg['store_code'] = 'YWZ806';
-            $cfg['shop_name'] = '杭州圣劳诗';
-            $cfg['shop_id'] = '杭州圣劳诗';
-            $writeLog('INFO', '仓库店铺配置完成');
-
-            // 其他
-            $cfg['log_to_db'] = true;
-            $cfg['auto_check_warehouse'] = true;
-            $cfg['warehouse_keywords'] = ['菜鸟', 'cainiao', '菜鸟仓'];
-            $cfg['currency'] = 'CNY';
-            $cfg['pay_channel'] = 'WEIXINPAY';
-            $writeLog('INFO', '其他配置完成');
-
-            // 发件人信息（如无专用字段，则沿用店铺名/默认值）
-            $cfg['sender_name'] = '杭州圣劳诗';
-            $cfg['sender_mobile'] = '0571-12345678';
-            $cfg['sender_province'] = '浙江省';
-            $cfg['sender_city'] = '金华市';
-            $cfg['sender_area'] = '义乌市';
-            $cfg['sender_address'] = '综保保税中心仓F1255';
-            $writeLog('INFO', '发件人信息配置完成');
-
-            // to_code 部分接口可不填
-            $cfg['to_code'] = '';
             $writeLog('INFO', '菜鸟配置数组构建完成');
 
         } catch (\Throwable $e) {
@@ -972,27 +954,7 @@ class Cainiao extends Base
      */
     private function getCainiaoBaseConfig(): array
     {
-        return [
-            'enabled'       => true,
-            'environment'   => 'production',
-            'app_code'      => '102905',
-            'resource_code' => '95f7ac77fd52d162a68eaea5cef3dc55',
-            'app_secret'    => '466aN6F8t0Q6jxiK8GUrFM355mju19j8',
-            'app_name'      => '杭州圣劳诗',
-            'to_code'       => '',
-            'order_source'  => '201',
-            // 税率及折扣配置，可根据业务线灵活调整（示例：0.05 即 5%）
-            'tax_rates'     => [
-                'customs'     => 0.0,    // 关税税率 0%
-                'consumption' => 0.15,   // 消费税税率 15%
-                'vat'         => 0.13,   // 增值税税率 13%
-            ],
-            'tax_discount'       => 1.0,   // 折扣（例如海关减免系数）
-
-            // 保险金额兼容配置，优先读取订单字段，其次使用默认值
-            'default_insurance'  => 0.0,
-            'insurance_field'    => '',
-        ];
+        return CainiaoConfigService::BaseConfig();
     }
 
 
