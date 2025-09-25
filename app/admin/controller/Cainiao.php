@@ -22,6 +22,88 @@ use think\facade\Log;
 class Cainiao extends Base
 {
     /**
+     * EXCEPT状态缓存，防止在已知EXCEPT状态下重复申报
+     * 格式：['transaction_id' => ['state' => 'EXCEPT', 'explanation' => '...', 'timestamp' => time()]]
+     */
+    private static $exceptStateCache = [];
+
+    /**
+     * 缓存有效期（秒）
+     */
+    private const EXCEPT_CACHE_TTL = 300; // 5分钟
+
+    /**
+     * 检查是否存在有效的EXCEPT状态缓存
+     */
+    private function checkExceptStateCache(string $transactionId, callable $logger): ?array
+    {
+        // 清理过期缓存
+        $this->cleanExpiredExceptCache();
+
+        if (isset(self::$exceptStateCache[$transactionId])) {
+            $cached = self::$exceptStateCache[$transactionId];
+            $ageMinutes = round((time() - $cached['timestamp']) / 60, 1);
+
+            $logger('INFO', '发现EXCEPT状态缓存，阻止重复申报', [
+                'transaction_id' => $transactionId,
+                'cached_explanation' => mb_substr($cached['explanation'], 0, 100) . '...',
+                'cache_age_minutes' => $ageMinutes,
+                'action' => 'BLOCK_BY_CACHE'
+            ]);
+
+            return [
+                'code' => -3, // 特殊错误码，表示被缓存阻止
+                'msg' => '该订单已知为EXCEPT状态，禁止重复申报: ' . $cached['explanation'],
+                'data' => [
+                    'transaction_id' => $transactionId,
+                    'cached_state' => 'EXCEPT',
+                    'explanation' => $cached['explanation'],
+                    'cached_at' => date('Y-m-d H:i:s', $cached['timestamp']),
+                    'cache_age_minutes' => $ageMinutes
+                ]
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * 缓存EXCEPT状态
+     */
+    private function cacheExceptState(string $transactionId, string $explanation, callable $logger): void
+    {
+        self::$exceptStateCache[$transactionId] = [
+            'state' => 'EXCEPT',
+            'explanation' => $explanation,
+            'timestamp' => time()
+        ];
+
+        $logger('INFO', '缓存EXCEPT状态信息', [
+            'transaction_id' => $transactionId,
+            'cache_count' => count(self::$exceptStateCache),
+            'explanation_length' => mb_strlen($explanation)
+        ]);
+    }
+
+    /**
+     * 清理过期的EXCEPT状态缓存
+     */
+    private function cleanExpiredExceptCache(): void
+    {
+        $currentTime = time();
+        $beforeCount = count(self::$exceptStateCache);
+
+        self::$exceptStateCache = array_filter(self::$exceptStateCache, function($cached) use ($currentTime) {
+            return ($currentTime - $cached['timestamp']) < self::EXCEPT_CACHE_TTL;
+        });
+
+        $afterCount = count(self::$exceptStateCache);
+        if ($beforeCount !== $afterCount) {
+            // 可以记录清理日志，但避免过于频繁
+        }
+    }
+
+    /**
      * 通知菜鸟发货
      * 路由：admin/cainiao/cainiaoshipment
      */
@@ -560,14 +642,16 @@ class Cainiao extends Base
 
         // 移除所有费用分拆相关的覆盖逻辑
 
-        $wxResult = $this->WechatCustomsDeclareProxy($wxReq, $writeLog);
+        // 使用智能海关申报处理：先查询状态，再决定申报或重推
+        $writeLog('INFO', '步骤6: 开始智能微信海关申报处理');
+        $wxResult = $this->WechatCustomsSmartDeclare($wxReq, $writeLog);
 
         if (($wxResult['code'] ?? -1) != 0) {
-            $writeLog('ERROR', '微信清关失败，中止菜鸟发货', $wxResult);
-            return ApiService::ApiDataReturn(DataReturn('微信清关失败：'.($wxResult['msg'] ?? 'unknown'), -1, $wxResult));
+            $writeLog('ERROR', '智能微信清关失败，中止菜鸟发货', $wxResult);
+            return ApiService::ApiDataReturn(DataReturn('智能微信清关失败：'.($wxResult['msg'] ?? 'unknown'), -1, $wxResult));
         }
 
-        $writeLog('INFO', '微信清关成功，继续菜鸟发货', $wxResult);
+        $writeLog('INFO', '智能微信清关成功，继续菜鸟发货', $wxResult);
 
 
         // 7) 组装请求参数并调用接口
@@ -1029,7 +1113,431 @@ class Cainiao extends Base
 
 
     /**
+     * 智能微信海关申报处理：先查询状态，再决定申报或重推
+     */
+    private function WechatCustomsSmartDeclare(array $req, callable $logger): array
+    {
+        $logger('INFO', '========== 开始智能微信海关申报处理 ==========', $req);
+
+        try {
+            // 第一步：查询当前申报状态
+            $logger('INFO', '步骤1: 查询当前海关申报状态');
+            $originalRequest = $this->data_request;
+            $this->data_request = $req;
+
+            $queryResult = $this->WechatCustomsDeclareQuery();
+            $this->data_request = $originalRequest;
+
+            $logger('INFO', '申报状态查询完成', ['query_result' => $queryResult]);
+
+            // 解析查询结果
+            $querySuccess = isset($queryResult['data']['code']) && $queryResult['data']['code'] === 0;
+            $queryData = $queryResult['data']['data'] ?? [];
+            $currentState = $queryData['state'] ?? 'UNKNOWN';
+
+            $logger('INFO', '申报状态解析', [
+                'query_success' => $querySuccess,
+                'current_state' => $currentState,
+                'return_code' => $queryData['return_code'] ?? '',
+                'result_code' => $queryData['result_code'] ?? ''
+            ]);
+
+            // 第二步：根据状态决定后续操作
+            if (!$querySuccess) {
+                $logger('WARNING', '查询申报状态失败，按未申报处理，直接进行首次申报');
+                return $this->executeCustomsDeclare($req, $logger, '查询失败-首次申报');
+            }
+
+            // 检查查询结果的通信和业务状态
+            $returnCode = $queryData['return_code'] ?? '';
+            $resultCode = $queryData['result_code'] ?? '';
+
+            if ($returnCode !== 'SUCCESS' || $resultCode !== 'SUCCESS') {
+                $logger('INFO', '查询结果显示通信或业务失败，按未申报处理');
+                return $this->executeCustomsDeclare($req, $logger, '查询异常-首次申报');
+            }
+
+            // 第三步：根据申报状态执行相应操作
+            switch ($currentState) {
+                case 'UNDECLARED':
+                    $logger('INFO', '当前状态: 尚未申报，执行首次申报');
+                    return $this->executeCustomsDeclare($req, $logger, '未申报-首次申报');
+
+                case 'SUCCESS':
+                    $logger('INFO', '当前状态: 申报成功，无需重新申报');
+                    return [
+                        'code' => 0,
+                        'msg' => '海关申报已成功，无需重新申报',
+                        'data' => $queryData
+                    ];
+
+                case 'SUBMITTED':
+                case 'PROCESSING':
+                    $logger('INFO', "当前状态: {$currentState}，申报处理中，无需操作");
+                    return [
+                        'code' => 0,
+                        'msg' => "海关申报{$currentState}，处理中",
+                        'data' => $queryData
+                    ];
+
+                case 'EXCEPT':
+                    // 查询到EXCEPT状态，直接返回异常信息，不进行重推
+                    $explanation = $this->extractExplanationFromQuery($queryData, $logger);
+                    $logger('INFO', "查询发现EXCEPT状态，直接返回异常信息，不执行重推", [
+                        'state' => $currentState,
+                        'explanation' => $explanation
+                    ]);
+                    return [
+                        'code' => -1,
+                        'msg' => $explanation ?: '海关申报异常，请检查申报条件',
+                        'data' => $queryData
+                    ];
+
+                case 'FAIL':
+                default:
+                    $logger('INFO', "当前状态: {$currentState}，需要重新申报");
+                    return $this->executeCustomsRedeclare($req, $logger, "状态{$currentState}-重推申报");
+            }
+
+        } catch (\Throwable $e) {
+            $logger('ERROR', '智能申报处理异常', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            // 异常情况下，执行首次申报
+            $logger('WARNING', '异常情况下执行首次申报');
+            return $this->executeCustomsDeclare($req, $logger, '异常处理-首次申报');
+        }
+    }
+
+    /**
+     * 执行首次海关申报，如果返回异常状态则自动重推
+     */
+    private function executeCustomsDeclare(array $req, callable $logger, string $reason): array
+    {
+        $logger('INFO', "执行首次海关申报", ['reason' => $reason]);
+
+        try {
+            $originalRequest = $this->data_request;
+            $this->data_request = $req;
+
+            $result = $this->WechatCustomsDeclareRaw();
+            $this->data_request = $originalRequest;
+
+            $logger('INFO', '首次申报执行完成', ['result' => $result]);
+
+            // 检查首次申报结果是否需要重推
+            $needRedeclare = $this->checkIfNeedRedeclare($result, $logger);
+            if ($needRedeclare['need']) {
+                $logger('INFO', '首次申报状态需要重推，自动执行重推申报', [
+                    'state' => $needRedeclare['state'],
+                    'reason' => $needRedeclare['reason']
+                ]);
+
+                return $this->executeCustomsRedeclare($req, $logger, "首次申报{$needRedeclare['state']}-自动重推");
+            }
+
+            // 标准化返回格式
+            return $this->normalizeCustomsResponse($result, $logger, '首次申报');
+
+        } catch (\Throwable $e) {
+            $logger('ERROR', '执行首次申报异常', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return [
+                'code' => -1,
+                'msg' => '首次申报执行异常: ' . $e->getMessage(),
+                'data' => []
+            ];
+        }
+    }
+
+    /**
+     * 检查申报结果是否需要重推
+     */
+    private function checkIfNeedRedeclare(array $result, callable $logger): array
+    {
+        try {
+            // 提取申报结果数据
+            $resultData = $result['data']['data'] ?? [];
+            $resultCode = $result['data']['code'] ?? -1;
+            $state = $resultData['state'] ?? '';
+
+            $logger('DEBUG', '检查是否需要重推', [
+                'result_code' => $resultCode,
+                'state' => $state,
+                'has_result_data' => !empty($resultData)
+            ]);
+
+            // 申报失败的情况不重推
+            if ($resultCode !== 0) {
+                return [
+                    'need' => false,
+                    'state' => $state,
+                    'reason' => '申报失败，不适合重推'
+                ];
+            }
+
+            // 检查需要重推的状态
+            $redeclareStates = ['FAIL', 'EXCEPT'];
+            if (in_array($state, $redeclareStates)) {
+                return [
+                    'need' => true,
+                    'state' => $state,
+                    'reason' => "状态{$state}需要重推"
+                ];
+            }
+
+            return [
+                'need' => false,
+                'state' => $state,
+                'reason' => "状态{$state}无需重推"
+            ];
+
+        } catch (\Throwable $e) {
+            $logger('ERROR', '检查重推需求异常', [
+                'error' => $e->getMessage(),
+                'result' => $result
+            ]);
+
+            return [
+                'need' => false,
+                'state' => 'UNKNOWN',
+                'reason' => '检查异常，不重推'
+            ];
+        }
+    }
+
+    /**
+     * 执行海关申报重推
+     */
+    private function executeCustomsRedeclare(array $req, callable $logger, string $reason): array
+    {
+        $logger('INFO', "执行海关申报重推", ['reason' => $reason]);
+
+        try {
+            $originalRequest = $this->data_request;
+            $this->data_request = $req;
+
+            $result = $this->WechatCustomsDeclareRedeclare();
+            $this->data_request = $originalRequest;
+
+            $logger('INFO', '申报重推执行完成', ['result' => $result]);
+
+            // 标准化返回格式
+            return $this->normalizeCustomsResponse($result, $logger, '申报重推');
+
+        } catch (\Throwable $e) {
+            $logger('ERROR', '执行申报重推异常', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return [
+                'code' => -1,
+                'msg' => '申报重推执行异常: ' . $e->getMessage(),
+                'data' => []
+            ];
+        }
+    }
+
+    /**
+     * 标准化海关申报响应格式
+     */
+    private function normalizeCustomsResponse(array $result, callable $logger, string $operation): array
+    {
+        try {
+            // 检查是否为标准的 ApiService 响应格式
+            if (isset($result['data']['code'])) {
+                $code = $result['data']['code'];
+                $msg = $result['data']['msg'] ?? '';
+                $data = $result['data']['data'] ?? [];
+
+                $logger('INFO', "{$operation}响应标准化", [
+                    'original_code' => $code,
+                    'original_msg' => $msg,
+                    'has_data' => !empty($data)
+                ]);
+
+                return [
+                    'code' => $code,
+                    'msg' => "{$operation}: {$msg}",
+                    'data' => $data
+                ];
+            }
+
+            // 非标准格式，按失败处理
+            $logger('WARNING', "{$operation}响应格式异常", ['result' => $result]);
+            return [
+                'code' => -1,
+                'msg' => "{$operation}响应格式异常",
+                'data' => $result
+            ];
+
+        } catch (\Throwable $e) {
+            $logger('ERROR', "{$operation}响应标准化异常", [
+                'error' => $e->getMessage(),
+                'result' => $result
+            ]);
+
+            return [
+                'code' => -1,
+                'msg' => "{$operation}响应处理异常: " . $e->getMessage(),
+                'data' => []
+            ];
+        }
+    }
+
+    /**
+     * 从查询响应中提取state值
+     */
+    private function extractStateFromQueryResponse(array $respArr, callable $logger): string
+    {
+        // 查找state_n格式的字段，优先返回EXCEPT状态
+        $states = [];
+        for ($i = 0; $i < 10; $i++) {
+            $stateKey = "state_$i";
+            if (isset($respArr[$stateKey]) && !empty($respArr[$stateKey])) {
+                $states[$i] = $respArr[$stateKey];
+
+                // 如果发现EXCEPT状态，优先返回（因为这是最需要关注的）
+                if ($respArr[$stateKey] === 'EXCEPT') {
+                    $logger('INFO', "检测到查询响应格式，发现EXCEPT状态，使用 $stateKey", [
+                        'state' => $respArr[$stateKey],
+                        'index' => $i,
+                        'priority' => 'high'
+                    ]);
+                    return $respArr[$stateKey];
+                }
+            }
+        }
+
+        // 如果没有EXCEPT状态，返回第一个找到的状态
+        if (!empty($states)) {
+            $firstIndex = array_key_first($states);
+            $firstState = $states[$firstIndex];
+            $logger('INFO', "检测到查询响应格式，使用 state_$firstIndex", [
+                'state' => $firstState,
+                'total_records' => count($states),
+                'all_states' => $states
+            ]);
+            return $firstState;
+        }
+
+        return '';
+    }
+
+    /**
+     * 从查询响应中提取异常说明
+     * 支持查询格式(state_n/explanation_n)和申报格式(state/explanation)
+     * 优化版本：只提取EXCEPT状态对应的说明
+     */
+    private function extractExplanationFromQuery(array $queryData, callable $logger): string
+    {
+        try {
+            // 1. 优先提取查询响应格式的EXCEPT状态说明
+            $explanations = $this->extractExceptExplanations($queryData);
+
+            // 2. 如果没有找到，检查申报响应格式
+            if (empty($explanations)) {
+                $state = $queryData['state'] ?? '';
+                if ($state === 'EXCEPT' && !empty($queryData['explanation'])) {
+                    $explanations[] = $queryData['explanation'];
+                }
+            }
+
+            $logger('INFO', '提取异常说明结果', [
+                'found_explanations' => count($explanations),
+                'has_query_format' => isset($queryData['state_0']),
+                'has_declare_format' => isset($queryData['state']),
+                'explanations_preview' => array_map(function($exp) {
+                    return mb_substr($exp, 0, 100) . (mb_strlen($exp) > 100 ? '...' : '');
+                }, $explanations)
+            ]);
+
+            if (!empty($explanations)) {
+                return implode("\n", $explanations);
+            }
+
+            // 3. 备用方案：检查其他错误信息字段
+            return $this->extractFallbackErrorMessage($queryData, $logger);
+
+        } catch (\Throwable $e) {
+            $logger('ERROR', '提取异常说明时发生错误', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return '提取异常说明时发生错误: ' . $e->getMessage();
+        }
+    }
+
+    /**
+     * 提取查询响应中的EXCEPT状态说明
+     */
+    private function extractExceptExplanations(array $queryData): array
+    {
+        $explanations = [];
+
+        for ($i = 0; $i < 10; $i++) {
+            $stateKey = "state_$i";
+            $explanationKey = "explanation_$i";
+
+            if (isset($queryData[$stateKey], $queryData[$explanationKey])) {
+                $state = $queryData[$stateKey];
+                $explanation = trim($queryData[$explanationKey]);
+
+                if ($state === 'EXCEPT' && !empty($explanation)) {
+                    $explanations[] = $explanation;
+                }
+            }
+        }
+
+        return $explanations;
+    }
+
+    /**
+     * 提取备用错误信息
+     */
+    private function extractFallbackErrorMessage(array $queryData, callable $logger): string
+    {
+        $fallbackFields = [
+            'return_msg' => '通信错误信息',
+            'err_code_des' => '业务错误描述',
+            'result_msg' => '结果信息'
+        ];
+
+        foreach ($fallbackFields as $field => $description) {
+            if (isset($queryData[$field]) && !empty($queryData[$field]) && $queryData[$field] !== 'SUCCESS') {
+                $logger('INFO', "使用备用字段作为异常说明", [
+                    'field' => $field,
+                    'description' => $description,
+                    'value' => $queryData[$field]
+                ]);
+                return $queryData[$field];
+            }
+        }
+
+        $logger('WARNING', '未找到任何异常说明信息', [
+            'available_keys' => array_keys($queryData),
+            'state_related_keys' => array_filter(array_keys($queryData), function($k) {
+                return strpos($k, 'state') !== false || strpos($k, 'explanation') !== false;
+            })
+        ]);
+
+        return '海关申报异常，未获取到具体说明';
+    }
+
+    /**
      * 内部代理：以数组参数调用 WechatCustomsDeclare()，返回统一结构
+     * @deprecated 已被 WechatCustomsSmartDeclare 替代
      */
     private function WechatCustomsDeclareProxy(array $req, callable $logger): array
     {
@@ -1047,7 +1555,7 @@ class Cainiao extends Base
         $resp = null;
         try {
             $this->data_request = $req;
-            $resp = $this->WechatCustomsDeclare();
+            $resp = $this->WechatCustomsDeclareRaw();
         } catch (\Throwable $e) {
             $this->data_request = $orig;
             $logger('ERROR', 'WechatCustomsDeclareProxy exception', [
@@ -1239,186 +1747,122 @@ class Cainiao extends Base
      */
     
     /**
-     * 申报接口：/cgi-bin/mch/customs/customdeclareorder
+     * 订单附加信息提交接口（海关申报提交）
+     * 接口：/cgi-bin/mch/customs/customdeclareorder
+     * 文档：https://pay.weixin.qq.com/doc/v2/merchant/4011985151
+     *
+     * 必填参数：appid, mch_id, customs, mch_customs_no
+     * 订单标识（二选一）：transaction_id 或 out_trade_no
+     * 可选参数：duty, action_type, cert_type, cert_id, name 等
+     * 其他参数：cert_key(商户API密钥v2), sign_type(MD5, 默认)
      */
     public function WechatCustomsDeclare()
     {
-        $logger = function($level, $message, $context = []) {
-            try {
-                $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
-                $line = '['.date('Y-m-d H:i:s')."][".$level.'] '.$message.' '.json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES).PHP_EOL;
-                @file_put_contents($log_file, $line, FILE_APPEND);
-            } catch (\Throwable $e) {}
-        };
+        // 所有海关申报都使用智能逻辑
+        $logger = $this->getWechatCustomsLogger();
         $req = $this->data_request;
-        $request_id = 'WXCG-DEC-' . date('YmdHis') . '-' . mt_rand(1000,9999);
-        $logger('INFO', 'WeChat customs declare start', ['request_id'=>$request_id,'params'=>$req]);
+        $request_id = 'WXCG-PUBLIC-' . date('YmdHis') . '-' . mt_rand(1000,9999);
 
-        // 基础校验
-        $appid           = trim($req['appid'] ?? '');
-        $mch_id          = trim($req['mch_id'] ?? '');
-        $mch_customs_no  = trim($req['mch_customs_no'] ?? '');
-        $customs         = trim($req['customs'] ?? '');
-        // 移除fee_type参数
-        $key_v2          = trim($req['cert_key'] ?? '');
-        $sign_type       = strtoupper(trim($req['sign_type'] ?? 'MD5'));
-        $transaction_id  = trim($req['transaction_id'] ?? '');
-        $out_trade_no    = trim($req['out_trade_no'] ?? '');
-        // 移除所有拆单相关参数：order_fee, transport_fee, product_fee
+        $logger('INFO', 'WechatCustomsDeclare 公开API调用，使用智能申报逻辑', [
+            'request_id' => $request_id,
+            'caller' => 'public_api',
+            'route' => $_SERVER['REQUEST_URI'] ?? 'unknown'
+        ]);
+
+        // 检查EXCEPT状态缓存
+        $transactionId = $req['transaction_id'] ?? '';
+        if (!empty($transactionId)) {
+            $cachedResult = $this->checkExceptStateCache($transactionId, $logger);
+            if ($cachedResult !== null) {
+                $logger('ERROR', 'EXCEPT状态缓存阻止公开API申报', [
+                    'transaction_id' => $transactionId,
+                    'request_id' => $request_id,
+                    'action' => 'BLOCKED_BY_CACHE'
+                ]);
+
+                // 强制抛出异常，确保外部代码无法继续执行
+                throw new \RuntimeException('EXCEPT_STATE_BLOCKED: ' . $cachedResult['msg'], $cachedResult['code']);
+            }
+        }
+
+        // 使用智能申报逻辑处理
+        $result = $this->WechatCustomsSmartDeclare($req, $logger);
+
+        $logger('INFO', 'WechatCustomsDeclare 智能申报完成', [
+            'result_code' => $result['code'] ?? -1,
+            'result_msg' => $result['msg'] ?? 'unknown'
+        ]);
+
+        // 转换为标准的ApiService响应格式
+        return ApiService::ApiDataReturn(DataReturn(
+            $result['msg'] ?? '处理完成',
+            $result['code'] ?? 0,
+            $result['data'] ?? []
+        ));
+    }
+
+    /**
+     * 原始的海关申报实现（仅供内部智能逻辑调用）
+     */
+    private function WechatCustomsDeclareRaw()
+    {
+        $logger = $this->getWechatCustomsLogger();
+        $req = $this->data_request;
+        $request_id = 'WXCG-RAW-' . date('YmdHis') . '-' . mt_rand(1000,9999);
+        $logger('INFO', 'WeChat customs declare raw start', ['request_id'=>$request_id,'params'=>$req]);
+
+        // 首先检查EXCEPT状态缓存，如果该订单已知为EXCEPT状态，直接拒绝申报
+        $transactionId = $req['transaction_id'] ?? '';
+        if (!empty($transactionId)) {
+            $cachedResult = $this->checkExceptStateCache($transactionId, $logger);
+            if ($cachedResult !== null) {
+                $logger('ERROR', 'EXCEPT状态缓存阻止申报执行', [
+                    'transaction_id' => $transactionId,
+                    'request_id' => $request_id,
+                    'action' => 'BLOCKED_BY_CACHE'
+                ]);
+
+                // 强制抛出异常，确保外部代码无法继续执行
+                throw new \RuntimeException('EXCEPT_STATE_BLOCKED: ' . $cachedResult['msg'], $cachedResult['code']);
+            }
+        }
+
+        // 基础参数验证
+        $baseValidation = $this->validateWechatCustomsBaseParams($req);
+        if (!$baseValidation['valid']) {
+            $logger('ERROR', 'base validation failed', ['error' => $baseValidation['error']]);
+            return ApiService::ApiDataReturn(DataReturn($baseValidation['error'], -1));
+        }
+
+        $baseParams = $baseValidation['params'];
 
         // 记录密钥长度，不记录实际内容（安全考虑）
-        $logger('INFO', 'WeChat key_v2 length', ['length' => strlen($key_v2), 'masked' => strlen($key_v2) > 8 ? substr($key_v2, 0, 4) . '****' . substr($key_v2, -4) : '****']);
-        if ($appid==='' || $mch_id==='' || $mch_customs_no==='' || $customs==='' || $key_v2==='') {
-            $logger('ERROR','missing required base fields', compact('appid','mch_id','mch_customs_no','customs'));
-            return ApiService::ApiDataReturn(DataReturn('缺少必要参数（appid/mch_id/mch_customs_no/customs/cert_key）', -1));
-        }
-        if ($transaction_id==='' && $out_trade_no==='') {
-            return ApiService::ApiDataReturn(DataReturn('缺少交易号（transaction_id 或 out_trade_no 二选一）', -1));
-        }
-        // 移除所有费用相关的验证
-
-        $url = 'https://api.mch.weixin.qq.com/cgi-bin/mch/customs/customdeclareorder';
-        $params = [
-            'appid'           => $appid,
-            'mch_id'          => $mch_id,
-            'mch_customs_no'  => $mch_customs_no,
-            'customs'         => $customs,
-            // 移除所有拆单相关字段：fee_type, order_fee, transport_fee, product_fee
-            // 移除nonce_str：海关申报接口不需要此字段
-        ];
-
-        // 关键修复：确保参数格式完全符合微信要求
-        $logger('INFO', '构建基础参数完成', [
-            'appid_len' => strlen($appid),
-            'mch_id_len' => strlen($mch_id)
+        $logger('INFO', 'WeChat key_v2 length', [
+            'length' => strlen($baseParams['key_v2']),
+            'masked' => strlen($baseParams['key_v2']) > 8 ? substr($baseParams['key_v2'], 0, 4) . '****' . substr($baseParams['key_v2'], -4) : '****'
         ]);
-        if ($transaction_id!=='') { $params['transaction_id'] = $transaction_id; }
-        if ($out_trade_no!=='')   { $params['out_trade_no']   = $out_trade_no; }
 
-        // 透传可选字段（若传入则加入签名）
-        $optionalKeys = [
-            'cert_type','cert_id','name',
-            'commerce_type','goods_info','payer_id_type','payer_id','pay_time','order_time',
-        ];
-        foreach ($optionalKeys as $k) {
-            if (isset($req[$k]) && $req[$k] !== '') {
-                $value = trim((string)$req[$k]);
-                // 特殊处理：移除所有不可见字符和多余空格
-                $value = preg_replace('/\s+/', ' ', $value);  // 多个空格压缩为一个
-                $value = preg_replace('/[^\x20-\x7E\x{4e00}-\x{9fa5}]/u', '', $value);  // 只保留可见ASCII和中文
-                if ($value !== '') {
-                    $params[$k] = $value;
-                    $logger('INFO', "可选参数[$k]已添加", ['value' => $value, 'original' => $req[$k]]);
-                }
-            }
+        // 申报参数验证和构建
+        $declareValidation = $this->validateAndBuildDeclareParams($req, $baseParams);
+        if (!$declareValidation['valid']) {
+            $logger('ERROR', 'declare validation failed', ['error' => $declareValidation['error']]);
+            return ApiService::ApiDataReturn(DataReturn($declareValidation['error'], -1));
         }
 
-        // 签名前验证和格式化参数
-        $logger('INFO','签名前参数验证', [
+        $params = $declareValidation['params'];
+
+        $logger('INFO', '参数构建完成', [
             'params_count' => count($params),
             'required_fields' => ['appid', 'mch_id', 'mch_customs_no', 'customs'],
-            'actual_keys' => array_keys($params)
+            'actual_keys' => array_keys($params),
+            'optional_fields' => array_intersect(array_keys($params), ['cert_type','cert_id','name','commerce_type','goods_info','payer_id_type','payer_id','pay_time','order_time'])
         ]);
 
-        // 确保数值类型参数为整数字符串（微信要求）
-        foreach (['order_fee', 'transport_fee', 'product_fee'] as $feeField) {
-            if (isset($params[$feeField])) {
-                $params[$feeField] = (string)(int)$params[$feeField];
-            }
-        }
+        // 调用API
+        $url = 'https://api.mch.weixin.qq.com/cgi-bin/mch/customs/customdeclareorder';
+        $respArr = $this->callWechatCustomsApi($url, $params, $baseParams['key_v2'], $baseParams['sign_type'], $logger);
 
-        // 签名
-        $params['sign_type'] = $sign_type;
-        $signString = null;
-        $params['sign']      = $this->wxSign($params, $key_v2, $sign_type, $signString);
-
-        $logger('INFO','declare sign string',[ 'sign_type'=>$sign_type, 'string'=>$signString, 'sign'=>$params['sign'] ]);
-        $logger('INFO','最终参数对比', [
-            'final_params' => $params,
-            'sign_excluded' => array_diff_key($params, ['sign' => ''])
-        ]);
-
-        $xml = $this->wxArrayToXml($params);
-        $logger('INFO','1.declare request xml built',['xml'=>$xml]);
-
-        $respXml = $this->wxPostXmlCurl($url, $xml, false, null, null, 30);
-        $respArr = $this->wxXmlToArray($respXml);
-        $logger('INFO','1.declare response received',['raw'=>$respXml,'parsed'=>$respArr]);
-
-        // 按照微信支付文档要求的完整状态判断逻辑
-        $return_code = $respArr['return_code'] ?? '';
-        $result_code = $respArr['result_code'] ?? '';
-        $state = $respArr['state'] ?? '';
-        $err_code = $respArr['err_code'] ?? '';
-        $err_code_des = $respArr['err_code_des'] ?? '';
-
-        $logger('INFO', '微信API响应状态分析', [
-            'return_code' => $return_code,
-            'result_code' => $result_code,
-            'state' => $state,
-            'err_code' => $err_code,
-            'err_code_des' => $err_code_des
-        ]);
-
-        // 第一层检查：通信状态
-        if ($return_code !== 'SUCCESS') {
-            $logger('ERROR', '微信API通信失败', [
-                'return_code' => $return_code,
-                'return_msg' => $respArr['return_msg'] ?? ''
-            ]);
-            return ApiService::ApiDataReturn(DataReturn('微信支付通信失败: ' . ($respArr['return_msg'] ?? '未知错误'), -1));
-        }
-
-        // 第二层检查：业务状态
-        if ($result_code !== 'SUCCESS') {
-            $error_msg = '微信支付业务处理失败';
-            if ($err_code) {
-                $error_msg .= " (错误码: {$err_code})";
-            }
-            if ($err_code_des) {
-                $error_msg .= " {$err_code_des}";
-            }
-
-            $logger('ERROR', '微信API业务失败', [
-                'result_code' => $result_code,
-                'err_code' => $err_code,
-                'err_code_des' => $err_code_des
-            ]);
-
-            return ApiService::ApiDataReturn(DataReturn($error_msg, -1));
-        }
-
-        // 第三层检查：海关申报状态
-        if ($state !== 'SUCCESS') {
-            $state_messages = [
-                'UNDECLARED' => '尚未申报',
-                'SUBMITTED' => '申报已提交',
-                'PROCESSING' => '申报处理中',
-                'FAIL' => '申报失败',
-                'EXCEPT' => '海关接口异常'
-            ];
-
-            $state_msg = $state_messages[$state] ?? "未知状态: {$state}";
-
-            // 对于非成功状态，记录详细信息但根据状态决定是否返回错误
-            $logger('INFO', '海关申报状态', [
-                'state' => $state,
-                'state_message' => $state_msg,
-                'customs_result' => $respArr
-            ]);
-
-            // 处理中的状态不算失败
-            if (in_array($state, ['PROCESSING', 'SUBMITTED'])) {
-                $logger('INFO', '海关申报处理中，后续可查询状态', ['state' => $state]);
-                return ApiService::ApiDataReturn(DataReturn("海关申报{$state_msg}，请稍后查询状态", 0, $respArr));
-            }
-
-            return ApiService::ApiDataReturn(DataReturn("海关申报{$state_msg}", -1, $respArr));
-        }
-
-        // 完全成功的情况
-        $logger('INFO', '海关申报成功', $respArr);
-        return ApiService::ApiDataReturn(DataReturn('海关申报成功', 0, $respArr));
+        return $this->processWechatCustomsResponse($respArr, $logger, '海关申报');
     }
 
     /**
@@ -1477,6 +1921,456 @@ class Cainiao extends Base
            && isset($respArr['result_code']) && $respArr['result_code']==='SUCCESS';
 
         return ApiService::ApiDataReturn(DataReturn($ok?'查询成功':'查询失败', $ok?0:-1, $respArr));
+    }
+
+    /**
+     * 订单附加信息查询接口（海关申报查询）
+     * 接口：/cgi-bin/mch/customs/customdeclarequery
+     * 文档：https://pay.weixin.qq.com/doc/v2/merchant/4011985273
+     *
+     * 必填参数：appid, mch_id, customs
+     * 订单标识（四选一，优先级从高到低）：
+     *   sub_order_id > sub_order_no > transaction_id > out_trade_no
+     * 其他参数：cert_key(商户API密钥v2), sign_type(MD5, 默认)
+     */
+    public function WechatCustomsDeclareQuery()
+    {
+        $logger = $this->getWechatCustomsLogger();
+        $req = $this->data_request;
+        $request_id = 'WXCG-QUERY-' . date('YmdHis') . '-' . mt_rand(1000,9999);
+        $logger('INFO', 'WeChat customs declare query start', ['request_id'=>$request_id,'params'=>$req]);
+
+        // 基础参数验证
+        $validation = $this->validateWechatCustomsBaseParams($req);
+        if (!$validation['valid']) {
+            $logger('ERROR', 'validation failed', ['error' => $validation['error']]);
+            return ApiService::ApiDataReturn(DataReturn($validation['error'], -1));
+        }
+
+        $baseParams = $validation['params'];
+        $customs        = trim($req['customs'] ?? '');
+        $transaction_id = trim($req['transaction_id'] ?? '');
+        $out_trade_no   = trim($req['out_trade_no'] ?? '');
+        $sub_order_no   = trim($req['sub_order_no'] ?? '');
+        $sub_order_id   = trim($req['sub_order_id'] ?? '');
+
+        // 业务参数验证
+        if ($customs === '') {
+            return ApiService::ApiDataReturn(DataReturn('缺少必要参数（customs）', -1));
+        }
+
+        // 订单标识验证
+        if ($transaction_id==='' && $out_trade_no==='' && $sub_order_no==='' && $sub_order_id==='') {
+            return ApiService::ApiDataReturn(DataReturn('缺少订单标识（transaction_id/out_trade_no/sub_order_no/sub_order_id 四选一）', -1));
+        }
+
+        // 构建请求参数
+        $params = [
+            'appid'   => $baseParams['appid'],
+            'mch_id'  => $baseParams['mch_id'],
+            'customs' => $customs,
+        ];
+
+        // 添加订单标识（四选一）
+        if ($transaction_id!=='') { $params['transaction_id'] = $transaction_id; }
+        if ($out_trade_no!=='')   { $params['out_trade_no']   = $out_trade_no; }
+        if ($sub_order_no!=='')   { $params['sub_order_no']   = $sub_order_no; }
+        if ($sub_order_id!=='')   { $params['sub_order_id']   = $sub_order_id; }
+
+        $logger('INFO', '构建查询参数完成', [
+            'customs' => $customs,
+            'order_identifiers' => array_intersect_key($params, array_flip(['transaction_id','out_trade_no','sub_order_no','sub_order_id']))
+        ]);
+
+        // 调用API
+        $url = 'https://api.mch.weixin.qq.com/cgi-bin/mch/customs/customdeclarequery';
+        $respArr = $this->callWechatCustomsApi($url, $params, $baseParams['key_v2'], $baseParams['sign_type'], $logger);
+
+        return $this->processWechatCustomsResponse($respArr, $logger, '海关申报查询');
+    }
+
+    /**
+     * 订单附加信息重推接口（海关申报重推）
+     * 接口：/cgi-bin/mch/newcustoms/customdeclareredeclare
+     * 文档：https://pay.weixin.qq.com/doc/v2/merchant/4011985318
+     *
+     * 必填参数：appid, mch_id, customs
+     * 条件必填：mch_customs_no（当customs不为"NO"时必填）
+     * 订单标识（二选一）：transaction_id 或 out_trade_no
+     * 可选参数：sub_order_no, sub_order_id
+     * 其他参数：cert_key(商户API密钥v2), sign_type(MD5, 默认)
+     */
+    public function WechatCustomsDeclareRedeclare()
+    {
+        $logger = $this->getWechatCustomsLogger();
+        $req = $this->data_request;
+        $request_id = 'WXCG-REDECLARE-' . date('YmdHis') . '-' . mt_rand(1000,9999);
+        $logger('INFO', 'WeChat customs redeclare start', ['request_id'=>$request_id,'params'=>$req]);
+
+        // 检查EXCEPT状态缓存，重推方法也应该被阻止
+        $transactionId = $req['transaction_id'] ?? '';
+        if (!empty($transactionId)) {
+            $cachedResult = $this->checkExceptStateCache($transactionId, $logger);
+            if ($cachedResult !== null) {
+                $logger('ERROR', 'EXCEPT状态缓存阻止重推申报', [
+                    'transaction_id' => $transactionId,
+                    'request_id' => $request_id,
+                    'action' => 'BLOCKED_BY_CACHE'
+                ]);
+
+                // 强制抛出异常，确保外部代码无法继续执行
+                throw new \RuntimeException('EXCEPT_STATE_BLOCKED: ' . $cachedResult['msg'], $cachedResult['code']);
+            }
+        }
+
+        // 基础参数验证
+        $validation = $this->validateWechatCustomsBaseParams($req);
+        if (!$validation['valid']) {
+            $logger('ERROR', 'validation failed', ['error' => $validation['error']]);
+            return ApiService::ApiDataReturn(DataReturn($validation['error'], -1));
+        }
+
+        $baseParams = $validation['params'];
+        $customs         = trim($req['customs'] ?? '');
+        $mch_customs_no  = trim($req['mch_customs_no'] ?? '');
+        $transaction_id  = trim($req['transaction_id'] ?? '');
+        $out_trade_no    = trim($req['out_trade_no'] ?? '');
+
+        // 业务参数验证
+        if ($customs === '') {
+            return ApiService::ApiDataReturn(DataReturn('缺少必要参数（customs）', -1));
+        }
+        if ($customs !== 'NO' && $mch_customs_no === '') {
+            return ApiService::ApiDataReturn(DataReturn('当customs不为NO时，mch_customs_no为必填', -1));
+        }
+        if ($transaction_id==='' && $out_trade_no==='') {
+            return ApiService::ApiDataReturn(DataReturn('缺少交易号（transaction_id 或 out_trade_no 二选一）', -1));
+        }
+
+        // 构建请求参数
+        $params = [
+            'appid'   => $baseParams['appid'],
+            'mch_id'  => $baseParams['mch_id'],
+            'customs' => $customs,
+        ];
+
+        // 添加海关备案号（如果需要）
+        if ($mch_customs_no !== '') {
+            $params['mch_customs_no'] = $mch_customs_no;
+        }
+
+        // 添加订单标识
+        if ($transaction_id!=='') { $params['transaction_id'] = $transaction_id; }
+        if ($out_trade_no!=='')   { $params['out_trade_no']   = $out_trade_no; }
+
+        $logger('INFO', '构建重推参数完成', [
+            'customs' => $customs,
+            'has_mch_customs_no' => $mch_customs_no !== ''
+        ]);
+
+        // 调用API
+        $url = 'https://api.mch.weixin.qq.com/cgi-bin/mch/newcustoms/customdeclareredeclare';
+        $respArr = $this->callWechatCustomsApi($url, $params, $baseParams['key_v2'], $baseParams['sign_type'], $logger);
+
+        return $this->processWechatCustomsResponse($respArr, $logger, '海关申报重推');
+    }
+
+    /**
+     * 通用微信海关申报日志记录方法
+     */
+    private function getWechatCustomsLogger(): callable
+    {
+        return function($level, $message, $context = []) {
+            try {
+                $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
+                $line = '['.date('Y-m-d H:i:s')."][".$level.'] '.$message.' '.json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES).PHP_EOL;
+                @file_put_contents($log_file, $line, FILE_APPEND);
+            } catch (\Throwable $e) {}
+        };
+    }
+
+    /**
+     * 通用微信海关申报参数验证
+     */
+    private function validateWechatCustomsBaseParams(array $req): array
+    {
+        $appid   = trim($req['appid'] ?? '');
+        $mch_id  = trim($req['mch_id'] ?? '');
+        $key_v2  = trim($req['cert_key'] ?? '');
+
+        if ($appid === '' || $mch_id === '' || $key_v2 === '') {
+            return [
+                'valid' => false,
+                'error' => '缺少必要参数（appid/mch_id/cert_key）',
+                'params' => null
+            ];
+        }
+
+        return [
+            'valid' => true,
+            'error' => '',
+            'params' => [
+                'appid' => $appid,
+                'mch_id' => $mch_id,
+                'key_v2' => $key_v2,
+                'sign_type' => strtoupper(trim($req['sign_type'] ?? 'MD5'))
+            ]
+        ];
+    }
+
+    /**
+     * 海关申报特殊参数验证和处理
+     * 根据微信支付文档 4011985151 - 订单附加信息提交接口
+     */
+    private function validateAndBuildDeclareParams(array $req, array $baseParams): array
+    {
+        $mch_customs_no = trim($req['mch_customs_no'] ?? '');
+        $customs        = trim($req['customs'] ?? '');
+        $transaction_id = trim($req['transaction_id'] ?? '');
+        $out_trade_no   = trim($req['out_trade_no'] ?? '');
+
+        // 申报接口特有的参数验证
+        if ($mch_customs_no === '' || $customs === '') {
+            return [
+                'valid' => false,
+                'error' => '缺少必要参数（mch_customs_no/customs）',
+                'params' => null
+            ];
+        }
+
+        if ($transaction_id === '' && $out_trade_no === '') {
+            return [
+                'valid' => false,
+                'error' => '缺少交易号（transaction_id 或 out_trade_no 二选一）',
+                'params' => null
+            ];
+        }
+
+        // 构建基础参数
+        $params = [
+            'appid'          => $baseParams['appid'],
+            'mch_id'         => $baseParams['mch_id'],
+            'mch_customs_no' => $mch_customs_no,
+            'customs'        => $customs,
+        ];
+
+        // 添加交易号
+        if ($transaction_id !== '') { $params['transaction_id'] = $transaction_id; }
+        if ($out_trade_no !== '')   { $params['out_trade_no']   = $out_trade_no; }
+
+        // 处理可选字段
+        $optionalKeys = [
+            'cert_type','cert_id','name',
+            'commerce_type','goods_info','payer_id_type','payer_id','pay_time','order_time',
+            'duty','action_type',  // 根据微信文档添加的可选参数
+        ];
+
+        foreach ($optionalKeys as $k) {
+            if (isset($req[$k]) && $req[$k] !== '') {
+                $value = trim((string)$req[$k]);
+                // 特殊处理：移除所有不可见字符和多余空格
+                $value = preg_replace('/\s+/', ' ', $value);  // 多个空格压缩为一个
+                $value = preg_replace('/[^\x20-\x7E\x{4e00}-\x{9fa5}]/u', '', $value);  // 只保留可见ASCII和中文
+                if ($value !== '') {
+                    $params[$k] = $value;
+                }
+            }
+        }
+
+        return [
+            'valid' => true,
+            'error' => '',
+            'params' => $params
+        ];
+    }
+
+    /**
+     * 通用微信海关申报API调用方法
+     */
+    private function callWechatCustomsApi(string $url, array $params, string $key_v2, string $sign_type, callable $logger): array
+    {
+        // 签名
+        $params['sign_type'] = $sign_type;
+        $signString = null;
+        $params['sign'] = $this->wxSign($params, $key_v2, $sign_type, $signString);
+
+        $logger('INFO', 'API请求签名完成', ['sign_string' => $signString, 'sign' => $params['sign']]);
+
+        // 发送请求
+        $xml = $this->wxArrayToXml($params);
+        $logger('INFO', 'API请求XML构建完成', ['xml' => $xml]);
+
+        $respXml = $this->wxPostXmlCurl($url, $xml, false, null, null, 30);
+        $respArr = $this->wxXmlToArray($respXml);
+        $logger('INFO', 'API响应接收完成', ['raw' => $respXml, 'parsed' => $respArr]);
+
+        return $respArr;
+    }
+
+    /**
+     * 统一的微信海关申报响应处理逻辑
+     */
+    private function processWechatCustomsResponse(array $respArr, callable $logger, string $operation = '海关申报'): array
+    {
+        // 按照微信支付文档要求的完整状态判断逻辑
+        $return_code = $respArr['return_code'] ?? '';
+        $result_code = $respArr['result_code'] ?? '';
+        $state = $respArr['state'] ?? '';
+        $err_code = $respArr['err_code'] ?? '';
+        $err_code_des = $respArr['err_code_des'] ?? '';
+
+        // 处理查询响应格式：如果没有直接的state字段，查找state_n字段
+        if (empty($state)) {
+            $state = $this->extractStateFromQueryResponse($respArr, $logger);
+        }
+
+        $logger('INFO', '微信API响应状态分析', [
+            'return_code' => $return_code,
+            'result_code' => $result_code,
+            'state' => $state,
+            'err_code' => $err_code,
+            'err_code_des' => $err_code_des
+        ]);
+
+        // 第一层检查：通信状态
+        if ($return_code !== 'SUCCESS') {
+            $logger('ERROR', '微信API通信失败', [
+                'return_code' => $return_code,
+                'return_msg' => $respArr['return_msg'] ?? ''
+            ]);
+            return ApiService::ApiDataReturn(DataReturn('微信支付通信失败: ' . ($respArr['return_msg'] ?? '未知错误'), -1));
+        }
+
+        // 第二层检查：业务状态
+        if ($result_code !== 'SUCCESS') {
+            $error_msg = $operation . '业务处理失败';
+            if ($err_code) {
+                $error_msg .= " (错误码: {$err_code})";
+            }
+            if ($err_code_des) {
+                $error_msg .= " {$err_code_des}";
+            }
+
+            $logger('ERROR', '微信API业务失败', [
+                'result_code' => $result_code,
+                'err_code' => $err_code,
+                'err_code_des' => $err_code_des
+            ]);
+
+            return ApiService::ApiDataReturn(DataReturn($error_msg, -1));
+        }
+
+        // 第三层检查：海关申报状态（如果提取到了state值）
+        if (!empty($state)) {
+            return $this->handleCustomsState($state, $respArr, $operation, $logger);
+        }
+
+        // 完全成功的情况
+        $logger('INFO', $operation . '成功', $respArr);
+        return ApiService::ApiDataReturn(DataReturn($operation . '成功', 0, $respArr));
+    }
+
+    /**
+     * 处理海关申报状态的统一逻辑
+     */
+    private function handleCustomsState(string $state, array $respArr, string $operation, callable $logger): array
+    {
+        if ($state === 'SUCCESS') {
+            $logger('INFO', $operation . '成功', $respArr);
+            return ApiService::ApiDataReturn(DataReturn($operation . '成功', 0, $respArr));
+        }
+
+        $state_messages = [
+            'UNDECLARED' => '尚未申报',
+            'SUBMITTED' => '申报已提交',
+            'PROCESSING' => '申报处理中',
+            'FAIL' => '申报失败',
+            'EXCEPT' => '海关接口异常'
+        ];
+
+        $state_msg = $state_messages[$state] ?? "未知状态: {$state}";
+
+        $logger('INFO', $operation . '状态', [
+            'state' => $state,
+            'state_message' => $state_msg,
+            'operation' => $operation,
+            'is_query_operation' => strpos($operation, '查询') !== false
+        ]);
+
+        // 1. 处理中的状态（不算失败）
+        if (in_array($state, ['PROCESSING', 'SUBMITTED'])) {
+            $logger('INFO', $operation . '处理中，后续可查询状态', ['state' => $state]);
+            return ApiService::ApiDataReturn(DataReturn("{$operation}{$state_msg}，请稍后查询状态", 0, $respArr));
+        }
+
+        // 2. 查询操作的特殊处理
+        if (strpos($operation, '查询') !== false) {
+            return $this->handleQueryOperationState($state, $state_msg, $respArr, $operation, $logger);
+        }
+
+        // 3. 申报操作的特殊处理
+        return $this->handleDeclareOperationState($state, $state_msg, $respArr, $operation, $logger);
+    }
+
+    /**
+     * 处理查询操作的状态
+     */
+    private function handleQueryOperationState(string $state, string $state_msg, array $respArr, string $operation, callable $logger): array
+    {
+        // 对于查询操作，所有非SUCCESS状态都应该明确返回，让调用方知道具体情况
+        switch ($state) {
+            case 'UNDECLARED':
+                $logger('INFO', '查询结果: 尚未申报', ['state' => $state]);
+                return ApiService::ApiDataReturn(DataReturn("查询结果: {$state_msg}", 0, $respArr));
+
+            case 'EXCEPT':
+                // EXCEPT状态提取详细说明并返回错误，阻止后续申报
+                $explanation = $this->extractExplanationFromQuery($respArr, $logger);
+                $error_msg = $explanation ?: "海关申报异常，请检查申报条件";
+
+                // 缓存EXCEPT状态，防止重复申报
+                $transactionId = $respArr['transaction_id'] ?? '';
+                if (!empty($transactionId)) {
+                    $this->cacheExceptState($transactionId, $explanation, $logger);
+                }
+
+                $logger('ERROR', '查询发现EXCEPT状态，返回详细异常信息阻止后续申报', [
+                    'state' => $state,
+                    'explanation' => $explanation,
+                    'transaction_id' => $transactionId,
+                    'cached' => !empty($transactionId),
+                    'action' => 'BLOCK_FURTHER_DECLARE'
+                ]);
+
+                return ApiService::ApiDataReturn(DataReturn($error_msg, -2, array_merge($respArr, ['explanation' => $explanation])));
+
+            case 'FAIL':
+                $logger('INFO', '查询结果: 申报失败，可以重新申报', ['state' => $state]);
+                return ApiService::ApiDataReturn(DataReturn("查询结果: {$state_msg}，可以重新申报", 0, $respArr));
+
+            default:
+                $logger('INFO', '查询结果: 其他状态', ['state' => $state, 'state_message' => $state_msg]);
+                return ApiService::ApiDataReturn(DataReturn("查询结果: {$state_msg}", 0, $respArr));
+        }
+    }
+
+    /**
+     * 处理申报操作的状态
+     */
+    private function handleDeclareOperationState(string $state, string $state_msg, array $respArr, string $operation, callable $logger): array
+    {
+        // 对于申报操作，FAIL和EXCEPT状态返回成功以便上层重推逻辑处理
+        if (in_array($state, ['FAIL', 'EXCEPT'])) {
+            $logger('INFO', $operation . '需要重推状态，返回成功以便触发重推逻辑', [
+                'state' => $state,
+                'will_retry' => true
+            ]);
+            return ApiService::ApiDataReturn(DataReturn("{$operation}{$state_msg}，需要重推", 0, $respArr));
+        }
+
+        // 其他失败状态
+        $logger('ERROR', $operation . '失败', ['state' => $state, 'state_message' => $state_msg]);
+        return ApiService::ApiDataReturn(DataReturn("{$operation}{$state_msg}", -1, $respArr));
     }
 
     /**
