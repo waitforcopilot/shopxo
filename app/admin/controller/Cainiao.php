@@ -550,7 +550,10 @@ class Cainiao extends Base
             'transaction_id'  => $pay_log_data['trade_no'] ?? ($orderRow['payment_no'] ?? ($this->data_request['transaction_id'] ?? '')),
             'out_trade_no'    => $orderRow['order_no'] ?? ($this->data_request['out_trade_no'] ?? ''),
             // 移除所有拆单相关字段：order_fee, transport_fee, product_fee, fee_type
-            // 移除个人证件相关字段：certificate_type, certificate_id, name
+            // 个人证件相关字段：参与签名计算并提交到XML，使用正确的参数名
+            'cert_type'       => $this->data_request['cert_type'] ?? ($cfg['wx_certificate_type'] ?? 'IDCARD'),
+            'cert_id'         => $this->data_request['cert_id'] ?? $buyerIdNoForWx,
+            'name'            => $this->data_request['name'] ?? $buyerNameForWx,
             // 移除buyer_country：不存在拆单情况时不需要
             // 'buyer_country'   => $this->data_request['buyer_country'] ?? ($receiverCountry ?? 'CN'),
         ];
@@ -1232,7 +1235,7 @@ class Cainiao extends Base
      *   appid, mch_id, mch_customs_no, customs,
      *   out_trade_no 或 transaction_id（二选一，推荐先用 transaction_id）,
      *   cert_key(商户API密钥v2, 用于签名), sign_type(MD5|HMAC-SHA256, 默认MD5)
-     * 可选：commerce_type, goods_info, etc.
+     * 可选：cert_type, cert_id, name, commerce_type, goods_info, etc.
      */
     
     /**
@@ -1294,6 +1297,7 @@ class Cainiao extends Base
 
         // 透传可选字段（若传入则加入签名）
         $optionalKeys = [
+            'cert_type','cert_id','name',
             'commerce_type','goods_info','payer_id_type','payer_id','pay_time','order_time',
         ];
         foreach ($optionalKeys as $k) {
@@ -1341,33 +1345,80 @@ class Cainiao extends Base
         $respArr = $this->wxXmlToArray($respXml);
         $logger('INFO','1.declare response received',['raw'=>$respXml,'parsed'=>$respArr]);
 
-        // 详细分析错误原因
-        if (isset($respArr['return_code']) && $respArr['return_code'] === 'FAIL') {
-            $error_analysis = [
-                'return_code' => $respArr['return_code'] ?? '',
-                'return_msg' => $respArr['return_msg'] ?? '',
-                'result_code' => $respArr['result_code'] ?? '',
-                'err_code' => $respArr['err_code'] ?? '',
-                'err_code_des' => $respArr['err_code_des'] ?? '',
-            ];
-            $logger('ERROR', '微信API调用失败详情', $error_analysis);
+        // 按照微信支付文档要求的完整状态判断逻辑
+        $return_code = $respArr['return_code'] ?? '';
+        $result_code = $respArr['result_code'] ?? '';
+        $state = $respArr['state'] ?? '';
+        $err_code = $respArr['err_code'] ?? '';
+        $err_code_des = $respArr['err_code_des'] ?? '';
 
-            // 根据错误代码提供解决建议
-            $error_suggestions = [
-                '签名验证失败' => '1.检查商户密钥配置 2.确认商户号是否开通清关申报功能 3.检查是否需要API证书',
-                'SYSTEMERROR' => '微信支付系统繁忙，请稍后重试',
-                'PARAM_ERROR' => '请求参数错误，检查必填参数是否完整',
-                'MCH_NOT_EXISTS' => '商户号不存在或未开通相关权限',
-            ];
+        $logger('INFO', '微信API响应状态分析', [
+            'return_code' => $return_code,
+            'result_code' => $result_code,
+            'state' => $state,
+            'err_code' => $err_code,
+            'err_code_des' => $err_code_des
+        ]);
 
-            $suggestion = $error_suggestions[$respArr['return_msg'] ?? ''] ?? '请联系微信支付技术支持';
-            $logger('INFO', '错误处理建议', ['suggestion' => $suggestion]);
+        // 第一层检查：通信状态
+        if ($return_code !== 'SUCCESS') {
+            $logger('ERROR', '微信API通信失败', [
+                'return_code' => $return_code,
+                'return_msg' => $respArr['return_msg'] ?? ''
+            ]);
+            return ApiService::ApiDataReturn(DataReturn('微信支付通信失败: ' . ($respArr['return_msg'] ?? '未知错误'), -1));
         }
 
-        $ok = isset($respArr['return_code']) && $respArr['return_code']==='SUCCESS'
-           && isset($respArr['result_code']) && $respArr['result_code']==='SUCCESS';
+        // 第二层检查：业务状态
+        if ($result_code !== 'SUCCESS') {
+            $error_msg = '微信支付业务处理失败';
+            if ($err_code) {
+                $error_msg .= " (错误码: {$err_code})";
+            }
+            if ($err_code_des) {
+                $error_msg .= " {$err_code_des}";
+            }
 
-        return ApiService::ApiDataReturn(DataReturn($ok?'申报成功':'申报失败', $ok?0:-1, $respArr));
+            $logger('ERROR', '微信API业务失败', [
+                'result_code' => $result_code,
+                'err_code' => $err_code,
+                'err_code_des' => $err_code_des
+            ]);
+
+            return ApiService::ApiDataReturn(DataReturn($error_msg, -1));
+        }
+
+        // 第三层检查：海关申报状态
+        if ($state !== 'SUCCESS') {
+            $state_messages = [
+                'UNDECLARED' => '尚未申报',
+                'SUBMITTED' => '申报已提交',
+                'PROCESSING' => '申报处理中',
+                'FAIL' => '申报失败',
+                'EXCEPT' => '海关接口异常'
+            ];
+
+            $state_msg = $state_messages[$state] ?? "未知状态: {$state}";
+
+            // 对于非成功状态，记录详细信息但根据状态决定是否返回错误
+            $logger('INFO', '海关申报状态', [
+                'state' => $state,
+                'state_message' => $state_msg,
+                'customs_result' => $respArr
+            ]);
+
+            // 处理中的状态不算失败
+            if (in_array($state, ['PROCESSING', 'SUBMITTED'])) {
+                $logger('INFO', '海关申报处理中，后续可查询状态', ['state' => $state]);
+                return ApiService::ApiDataReturn(DataReturn("海关申报{$state_msg}，请稍后查询状态", 0, $respArr));
+            }
+
+            return ApiService::ApiDataReturn(DataReturn("海关申报{$state_msg}", -1, $respArr));
+        }
+
+        // 完全成功的情况
+        $logger('INFO', '海关申报成功', $respArr);
+        return ApiService::ApiDataReturn(DataReturn('海关申报成功', 0, $respArr));
     }
 
     /**
@@ -1454,8 +1505,11 @@ class Cainiao extends Base
         ksort($data);
         $pairs = [];
         foreach ($data as $k => $v) {
-            // 关键修复：排除sign、sign_type和nonce_str字段，海关申报接口nonce_str不参与签名
-            if ($v === '' || $v === null || $k === 'sign' || $k === 'sign_type' || $k === 'nonce_str') continue;
+            // 关键修复：排除不参与签名的字段
+            // 1. sign, sign_type - 标准排除字段
+            // 2. nonce_str - 海关申报接口不参与签名
+            $excludeFields = ['sign', 'sign_type', 'nonce_str'];
+            if ($v === '' || $v === null || in_array($k, $excludeFields)) continue;
             $pairs[] = $k.'='.$v;
         }
 
@@ -1498,7 +1552,7 @@ class Cainiao extends Base
         ksort($arr);
 
         foreach ($arr as $k => $v) {
-            // 排除sign_type和nonce_str，不输出到XML中
+            // 排除不需要在XML中输出的字段
             if ($k === 'sign_type' || $k === 'nonce_str') continue;
 
             if (is_numeric($v)) {
