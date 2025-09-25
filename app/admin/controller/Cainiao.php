@@ -38,7 +38,7 @@ class Cainiao extends Base
                 $timestamp = date('Y-m-d H:i:s');
                 $json_data = '';
                 if (!empty($data)) {
-                    $json_data = json_encode($data, JSON_UNESCAPED_UNICODE);
+                    $json_data = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     if (json_last_error() !== JSON_ERROR_NONE) {
                         $json_data = 'JSON_ENCODE_ERROR: ' . json_last_error_msg() . ' - DATA_TYPE: ' . gettype($data);
                     }
@@ -84,7 +84,7 @@ class Cainiao extends Base
             'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? ''
         ]);
 
-        Log::info('[CainiaoShipment] enter', ['request_id' => $request_id, 'params' => json_encode($this->data_request, JSON_UNESCAPED_UNICODE)]);
+        Log::info('[CainiaoShipment] enter', ['request_id' => $request_id, 'params' => json_encode($this->data_request, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
 
         // 1) 参数校验
         $writeLog('INFO', '步骤1: 开始参数校验');
@@ -127,11 +127,16 @@ class Cainiao extends Base
                 'currency'       => 'CNY',
                 'pay_channel'    => 'WEIXINPAY',
             ]);
+            $cfg['wx_appid']    = 'wxd3733ec9c0b1be60';
+            $cfg['wx_mchid']    = '1727065102';
+            $cfg['wx_mch_customs_no']    = '3301960G5S';
+            $cfg['wx_customs']    = 'HANGZHOU_ZS';
+            $cfg['wx_api_key_v2']    = 'Z4mT8qV1fL7yH2cX9pD5kR3wS6bN0aJg';
 
             $cfg['owner_user_id']    = '2220576876930';
             $cfg['business_unit_id'] = 'B06738021';
             $cfg['order_type']       = 'BONDED_WHS';
-            $cfg['order_source']     = '201';
+            $cfg['order_source']     = '1280';
             $cfg['order_sub_source'] = '';
             $cfg['sale_mode']        = '1';
             $cfg['store_code']       = 'YWZ806';
@@ -203,6 +208,30 @@ class Cainiao extends Base
                 'order_status' => $orderRow['order_status'] ?? null
             ]);
 
+            // 获取订单关联信息
+            $pay_log_value = Db::name('PayLogValue')->where(['business_no'=>$orderRow['order_no']])->find();
+            if(empty($pay_log_value))
+            {
+                $writeLog('ERROR', ' 获取订单关联信息失败: 订单不存在', ['order_no' => $orderRow['order_no']]);
+                Log::warning('[CainiaoShipment] PayLogValue not found', ['order_no' => $orderRow['order_no']]);
+                return ApiService::ApiDataReturn(DataReturn('获取订单关联信息失败', -1));
+            }
+            // 获取支付日志订单
+            $pay_log_data = Db::name('PayLog')->where(['id'=>$pay_log_value['pay_log_id']])->find();
+            if(empty($pay_log_data))
+            {
+                $writeLog('ERROR', ' 获取支付日志订单: 订单不存在', ['id' => $pay_log_value['pay_log_id']]);
+                Log::warning('[CainiaoShipment] PayLog not found', ['id' => $pay_log_value['pay_log_id']]);
+                return ApiService::ApiDataReturn(DataReturn('获取支付日志订单', -1));
+            }
+
+            $writeLog('INFO', '获取支付日志订单', [
+                'log_no' => $pay_log_data['log_no'] ?? null,
+                'trade_no' => $pay_log_data['trade_no'] ?? null,
+                'buyer_user' => $pay_log_data['buyer_user'] ?? null
+            ]);
+
+            
             $writeLog('INFO', '正在查询订单明细');
             $details = Db::name('OrderDetail')->where('order_id', $order_id)->select()->toArray();
             $writeLog('INFO', '订单明细查询完成', ['details_count' => is_array($details) ? count($details) : 0]);
@@ -470,7 +499,7 @@ class Cainiao extends Base
                 'buyerIDType'     => '1',
                 'buyerIDNo'       => (string)$buyerIdNo,
                 'payChannel'      => (string)$cfg['pay_channel'],
-                'payOrderId'      => (string)($orderRow['payment_id'] ?? ''),
+                'payOrderId'      => (string)($pay_log_data['trade_no'] ?? null),
                 'nationality'     => 'CN',
                 'contactNo'       => (string)$receiverTel,
             ],
@@ -490,6 +519,53 @@ class Cainiao extends Base
         $writeLog('INFO', '步骤6: 请求数据组装完成 - 组装的完整数据内容', [
             'request_data' => $request_data
         ]);
+        // 6.1) 微信支付清关申报（先清关，成功后再调用菜鸟接口）
+        $writeLog('INFO', '步骤6.1: 调用微信支付清关申报API（WeChat customs declare）');
+
+        // 证件/姓名从前面解析结果或订单字段兜底
+        $buyerNameForWx = $buyerName ?? ($receiverName ?? '');
+        $buyerIdNoForWx = $buyerIdNo ?? '';
+
+        $wxOrderFeeYuan     = $pay_log_data['total_price'] ?? ($orderRow['total_price'] ?? ($this->data_request['order_fee_yuan'] ?? 0));
+        $wxTransportFeeYuan = $orderRow['express_price'] ?? ($this->data_request['transport_fee_yuan'] ?? 0);
+        $wxOrderFee         = $this->toCent($wxOrderFeeYuan);
+        $wxTransportFee     = $this->toCent($wxTransportFeeYuan);
+        $wxProductFee       = max(0, $wxOrderFee - $wxTransportFee);
+
+        // 组装微信清关参数（可从配置/订单映射，也可通过前端传入覆盖）
+        $writeLog('INFO', '微信清关金额计算', [
+            'order_fee_yuan' => $wxOrderFeeYuan,
+            'transport_fee_yuan' => $wxTransportFeeYuan,
+            'order_fee_cent' => $wxOrderFee,
+            'transport_fee_cent' => $wxTransportFee,
+            'product_fee_cent' => $wxProductFee,
+        ]);
+
+        $wxReq = [
+            'appid'           => $cfg['wx_appid'] ?? ($this->data_request['wx_appid'] ?? ''),
+            'mch_id'          => $cfg['wx_mchid'] ?? ($this->data_request['wx_mchid'] ?? ''),
+            'mch_customs_no'  => $cfg['wx_mch_customs_no'] ?? ($this->data_request['wx_mch_customs_no'] ?? ''),
+            'customs'         => $cfg['wx_customs'] ?? ($this->data_request['wx_customs'] ?? 'ZHENGZHOU_ZHENGGAO'),
+            'cert_key'        => $cfg['wx_api_key_v2'] ?? ($this->data_request['wx_api_key_v2'] ?? ''),
+            'transaction_id'  => $pay_log_data['trade_no'] ?? ($orderRow['payment_no'] ?? ($this->data_request['transaction_id'] ?? '')),
+            'out_trade_no'    => $orderRow['order_no'] ?? ($this->data_request['out_trade_no'] ?? ''),
+            // 移除所有拆单相关字段：order_fee, transport_fee, product_fee, fee_type
+            // 移除个人证件相关字段：certificate_type, certificate_id, name
+            // 移除buyer_country：不存在拆单情况时不需要
+            // 'buyer_country'   => $this->data_request['buyer_country'] ?? ($receiverCountry ?? 'CN'),
+        ];
+
+        // 移除所有费用分拆相关的覆盖逻辑
+
+        $wxResult = $this->WechatCustomsDeclareProxy($wxReq, $writeLog);
+
+        if (($wxResult['code'] ?? -1) != 0) {
+            $writeLog('ERROR', '微信清关失败，中止菜鸟发货', $wxResult);
+            return ApiService::ApiDataReturn(DataReturn('微信清关失败：'.($wxResult['msg'] ?? 'unknown'), -1, $wxResult));
+        }
+
+        $writeLog('INFO', '微信清关成功，继续菜鸟发货', $wxResult);
+
 
         // 7) 组装请求参数并调用接口
         $writeLog('INFO', '步骤7: 开始组装API请求参数');
@@ -511,7 +587,7 @@ class Cainiao extends Base
             'data_digest_len' => strlen($request_params['data_digest'] ?? ''),
             'app_secret_masked' => $maskedSecret,
         ]);
-        Log::debug('[CainiaoShipment] logistics_interface', ['body' => is_array($request_data) ? json_encode($request_data, JSON_UNESCAPED_UNICODE) : $request_data]);
+        Log::debug('[CainiaoShipment] logistics_interface', ['body' => is_array($request_data) ? json_encode($request_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : $request_data]);
 
         $writeLog('INFO', '步骤8: 接口调用完成', [
             'url' => $apiResult['url'],
@@ -526,8 +602,8 @@ class Cainiao extends Base
                 'express_name'   => 'GLOBAL_SALE_ORDER_NOTIFY',
                 'express_number' => $orderRow['order_no'] ?? (string)$order_id,
                 'express_code'   => 'CAINIAO',
-                'request_params' => json_encode($request_params, JSON_UNESCAPED_UNICODE),
-                'response_data'  => json_encode($apiResult['response_raw'], JSON_UNESCAPED_UNICODE),
+                'request_params' => json_encode($request_params, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'response_data'  => json_encode($apiResult['response_raw'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'add_time'       => time(),
             ];
             Db::name('PluginsExpressLog')->insertGetId($insert_data);
@@ -600,7 +676,7 @@ class Cainiao extends Base
                 $timestamp = date('Y-m-d H:i:s');
                 $json_data = '';
                 if (!empty($data)) {
-                    $json_data = json_encode($data, JSON_UNESCAPED_UNICODE);
+                    $json_data = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     if (json_last_error() !== JSON_ERROR_NONE) {
                         $json_data = 'JSON_ERROR: '.json_last_error_msg();
                     }
@@ -676,7 +752,7 @@ class Cainiao extends Base
         }
         $cancelWriteLog('INFO', 'config ready', ['cpCode' => $cpCode, 'environment' => $cfg['environment']]);
 
-        $orderSource = isset($cfg['order_source']) ? (string)$cfg['order_source'] : '201';
+        $orderSource = isset($cfg['order_source']) ? (string)$cfg['order_source'] : '1280';
         $externalOrderCode = (string)($orderRow['order_no'] ?? $order_id);
         $userId = isset($cfg['owner_user_id']) ? (string)$cfg['owner_user_id'] : '';
         $extUserId = isset($cfg['shop_id']) ? (string)$cfg['shop_id'] : '';
@@ -950,6 +1026,75 @@ class Cainiao extends Base
 
 
     /**
+     * 内部代理：以数组参数调用 WechatCustomsDeclare()，返回统一结构
+     */
+    private function WechatCustomsDeclareProxy(array $req, callable $logger): array
+    {
+        $logPayload = $req;
+        if (isset($logPayload['cert_key'])) {
+            $certKey = (string)$logPayload['cert_key'];
+            $logPayload['cert_key_masked'] = strlen($certKey) > 8
+                ? substr($certKey, 0, 4).'****'.substr($certKey, -4)
+                : '****';
+            unset($logPayload['cert_key']);
+        }
+        $logger('INFO', 'WechatCustomsDeclareProxy request payload', $logPayload);
+
+        $orig = $this->data_request;
+        $resp = null;
+        try {
+            $this->data_request = $req;
+            $resp = $this->WechatCustomsDeclare();
+        } catch (\Throwable $e) {
+            $this->data_request = $orig;
+            $logger('ERROR', 'WechatCustomsDeclareProxy exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return ['code'=>-1, 'msg'=>$e->getMessage()];
+        } finally {
+            $this->data_request = $orig;
+        }
+
+        $parsed = null;
+        $responseType = is_object($resp) ? get_class($resp) : gettype($resp);
+
+        if (is_array($resp)) {
+            $parsed = $resp;
+        } elseif (is_object($resp)) {
+            if (method_exists($resp, 'getData')) {
+                try {
+                    $parsed = $resp->getData();
+                } catch (\Throwable $e) {
+                    $logger('WARNING', 'WechatCustomsDeclareProxy getData failed', ['error' => $e->getMessage()]);
+                }
+            }
+            if ($parsed === null && method_exists($resp, 'getContent')) {
+                $content = $resp->getContent();
+                $decoded = json_decode($content, true);
+                $parsed = json_last_error() === JSON_ERROR_NONE ? $decoded : $content;
+            }
+        }
+
+        $logger('INFO', 'WechatCustomsDeclareProxy raw response', [
+            'type' => $responseType,
+            'parsed' => $parsed,
+        ]);
+
+        if (is_array($parsed) && isset($parsed['code']) && $parsed['code'] == 0) {
+            $logger('INFO', 'WechatCustomsDeclareProxy normalized response', ['code' => 0, 'msg' => 'success']);
+            return ['code'=>0, 'msg'=>'success', 'data'=>$parsed['data'] ?? []];
+        }
+        if (is_array($parsed)) {
+            $logger('WARNING', 'WechatCustomsDeclareProxy non-success response', ['code' => $parsed['code'] ?? null, 'msg' => $parsed['msg'] ?? null]);
+            return ['code'=>-1, 'msg'=>$parsed['msg'] ?? 'unknown error', 'data'=>$parsed['data'] ?? []];
+        }
+
+        return ['code'=>-1, 'msg'=>'unexpected response', 'data' => ['raw_type' => $responseType, 'raw' => $parsed]];
+    }
+
+
+    /**
      * 菜鸟基础配置
      */
     private function getCainiaoBaseConfig(): array
@@ -969,7 +1114,7 @@ class Cainiao extends Base
         $cpCode    = trim($cfg['resource_code'] ?? '');
         $appSecret = trim($cfg['app_secret'] ?? '');
 
-        $content = is_string($payload) ? $payload : json_encode($payload, JSON_UNESCAPED_UNICODE);
+        $content = is_string($payload) ? $payload : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($logger) {
             $logger('INFO', '[callCainiaoApi] payload encoded', [
                 'payload_type'   => is_array($payload) ? 'array' : gettype($payload),
@@ -1073,6 +1218,370 @@ class Cainiao extends Base
         ];
     }
 
+    /**
+     * =============================
+     * 微信支付 - 清关申报 API（v2 XML）
+     * 说明：提供两个接口封装：申报(customdeclareorder) 与 查询(customdeclarequery)。
+     * 为避免强耦合，这里不依赖全局配置，必要字段从请求参数读取。
+     * 
+     * 路由建议：
+     *   admin/cainiao/wechatcustomsdeclare
+     *   admin/cainiao/wechatcustomsquery
+     * 
+     * 必填示例（申报）：
+     *   appid, mch_id, mch_customs_no, customs,
+     *   out_trade_no 或 transaction_id（二选一，推荐先用 transaction_id）,
+     *   cert_key(商户API密钥v2, 用于签名), sign_type(MD5|HMAC-SHA256, 默认MD5)
+     * 可选：commerce_type, goods_info, etc.
+     */
+    
+    /**
+     * 申报接口：/cgi-bin/mch/customs/customdeclareorder
+     */
+    public function WechatCustomsDeclare()
+    {
+        $logger = function($level, $message, $context = []) {
+            try {
+                $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
+                $line = '['.date('Y-m-d H:i:s')."][".$level.'] '.$message.' '.json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES).PHP_EOL;
+                @file_put_contents($log_file, $line, FILE_APPEND);
+            } catch (\Throwable $e) {}
+        };
+        $req = $this->data_request;
+        $request_id = 'WXCG-DEC-' . date('YmdHis') . '-' . mt_rand(1000,9999);
+        $logger('INFO', 'WeChat customs declare start', ['request_id'=>$request_id,'params'=>$req]);
+
+        // 基础校验
+        $appid           = trim($req['appid'] ?? '');
+        $mch_id          = trim($req['mch_id'] ?? '');
+        $mch_customs_no  = trim($req['mch_customs_no'] ?? '');
+        $customs         = trim($req['customs'] ?? '');
+        // 移除fee_type参数
+        $key_v2          = trim($req['cert_key'] ?? '');
+        $sign_type       = strtoupper(trim($req['sign_type'] ?? 'MD5'));
+        $transaction_id  = trim($req['transaction_id'] ?? '');
+        $out_trade_no    = trim($req['out_trade_no'] ?? '');
+        // 移除所有拆单相关参数：order_fee, transport_fee, product_fee
+
+        // 记录密钥长度，不记录实际内容（安全考虑）
+        $logger('INFO', 'WeChat key_v2 length', ['length' => strlen($key_v2), 'masked' => strlen($key_v2) > 8 ? substr($key_v2, 0, 4) . '****' . substr($key_v2, -4) : '****']);
+        if ($appid==='' || $mch_id==='' || $mch_customs_no==='' || $customs==='' || $key_v2==='') {
+            $logger('ERROR','missing required base fields', compact('appid','mch_id','mch_customs_no','customs'));
+            return ApiService::ApiDataReturn(DataReturn('缺少必要参数（appid/mch_id/mch_customs_no/customs/cert_key）', -1));
+        }
+        if ($transaction_id==='' && $out_trade_no==='') {
+            return ApiService::ApiDataReturn(DataReturn('缺少交易号（transaction_id 或 out_trade_no 二选一）', -1));
+        }
+        // 移除所有费用相关的验证
+
+        $url = 'https://api.mch.weixin.qq.com/cgi-bin/mch/customs/customdeclareorder';
+        $params = [
+            'appid'           => $appid,
+            'mch_id'          => $mch_id,
+            'mch_customs_no'  => $mch_customs_no,
+            'customs'         => $customs,
+            // 移除所有拆单相关字段：fee_type, order_fee, transport_fee, product_fee
+            // 移除nonce_str：海关申报接口不需要此字段
+        ];
+
+        // 关键修复：确保参数格式完全符合微信要求
+        $logger('INFO', '构建基础参数完成', [
+            'appid_len' => strlen($appid),
+            'mch_id_len' => strlen($mch_id)
+        ]);
+        if ($transaction_id!=='') { $params['transaction_id'] = $transaction_id; }
+        if ($out_trade_no!=='')   { $params['out_trade_no']   = $out_trade_no; }
+
+        // 透传可选字段（若传入则加入签名）
+        $optionalKeys = [
+            'commerce_type','goods_info','payer_id_type','payer_id','pay_time','order_time',
+        ];
+        foreach ($optionalKeys as $k) {
+            if (isset($req[$k]) && $req[$k] !== '') {
+                $value = trim((string)$req[$k]);
+                // 特殊处理：移除所有不可见字符和多余空格
+                $value = preg_replace('/\s+/', ' ', $value);  // 多个空格压缩为一个
+                $value = preg_replace('/[^\x20-\x7E\x{4e00}-\x{9fa5}]/u', '', $value);  // 只保留可见ASCII和中文
+                if ($value !== '') {
+                    $params[$k] = $value;
+                    $logger('INFO', "可选参数[$k]已添加", ['value' => $value, 'original' => $req[$k]]);
+                }
+            }
+        }
+
+        // 签名前验证和格式化参数
+        $logger('INFO','签名前参数验证', [
+            'params_count' => count($params),
+            'required_fields' => ['appid', 'mch_id', 'mch_customs_no', 'customs'],
+            'actual_keys' => array_keys($params)
+        ]);
+
+        // 确保数值类型参数为整数字符串（微信要求）
+        foreach (['order_fee', 'transport_fee', 'product_fee'] as $feeField) {
+            if (isset($params[$feeField])) {
+                $params[$feeField] = (string)(int)$params[$feeField];
+            }
+        }
+
+        // 签名
+        $params['sign_type'] = $sign_type;
+        $signString = null;
+        $params['sign']      = $this->wxSign($params, $key_v2, $sign_type, $signString);
+
+        $logger('INFO','declare sign string',[ 'sign_type'=>$sign_type, 'string'=>$signString, 'sign'=>$params['sign'] ]);
+        $logger('INFO','最终参数对比', [
+            'final_params' => $params,
+            'sign_excluded' => array_diff_key($params, ['sign' => ''])
+        ]);
+
+        $xml = $this->wxArrayToXml($params);
+        $logger('INFO','1.declare request xml built',['xml'=>$xml]);
+
+        $respXml = $this->wxPostXmlCurl($url, $xml, false, null, null, 30);
+        $respArr = $this->wxXmlToArray($respXml);
+        $logger('INFO','1.declare response received',['raw'=>$respXml,'parsed'=>$respArr]);
+
+        // 详细分析错误原因
+        if (isset($respArr['return_code']) && $respArr['return_code'] === 'FAIL') {
+            $error_analysis = [
+                'return_code' => $respArr['return_code'] ?? '',
+                'return_msg' => $respArr['return_msg'] ?? '',
+                'result_code' => $respArr['result_code'] ?? '',
+                'err_code' => $respArr['err_code'] ?? '',
+                'err_code_des' => $respArr['err_code_des'] ?? '',
+            ];
+            $logger('ERROR', '微信API调用失败详情', $error_analysis);
+
+            // 根据错误代码提供解决建议
+            $error_suggestions = [
+                '签名验证失败' => '1.检查商户密钥配置 2.确认商户号是否开通清关申报功能 3.检查是否需要API证书',
+                'SYSTEMERROR' => '微信支付系统繁忙，请稍后重试',
+                'PARAM_ERROR' => '请求参数错误，检查必填参数是否完整',
+                'MCH_NOT_EXISTS' => '商户号不存在或未开通相关权限',
+            ];
+
+            $suggestion = $error_suggestions[$respArr['return_msg'] ?? ''] ?? '请联系微信支付技术支持';
+            $logger('INFO', '错误处理建议', ['suggestion' => $suggestion]);
+        }
+
+        $ok = isset($respArr['return_code']) && $respArr['return_code']==='SUCCESS'
+           && isset($respArr['result_code']) && $respArr['result_code']==='SUCCESS';
+
+        return ApiService::ApiDataReturn(DataReturn($ok?'申报成功':'申报失败', $ok?0:-1, $respArr));
+    }
+
+    /**
+     * 查询接口：/cgi-bin/mch/customs/customdeclarequery
+     */
+    public function WechatCustomsQuery()
+    {
+        $logger = function($level, $message, $context = []) {
+            try {
+                $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
+                $line = '['.date('Y-m-d H:i:s')."][".$level.'] '.$message.' '.json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES).PHP_EOL;
+                @file_put_contents($log_file, $line, FILE_APPEND);
+            } catch (\Throwable $e) {}
+        };
+        $req = $this->data_request;
+        $request_id = 'WXCG-QRY-' . date('YmdHis') . '-' . mt_rand(1000,9999);
+        $logger('INFO', 'WeChat customs query start', ['request_id'=>$request_id,'params'=>$req]);
+
+        $appid          = trim($req['appid'] ?? '');
+        $mch_id         = trim($req['mch_id'] ?? '');
+        $customs        = trim($req['customs'] ?? '');
+        $key_v2         = trim($req[''] ?? '');
+        $sign_type      = strtoupper(trim($req['sign_type'] ?? 'MD5'));
+        $transaction_id = trim($req['transaction_id'] ?? '');
+        $out_trade_no   = trim($req['out_trade_no'] ?? '');
+
+        if ($appid==='' || $mch_id==='' || $customs==='' || $key_v2==='') {
+            return ApiService::ApiDataReturn(DataReturn('缺少必要参数（appid/mch_id/customs/cert_key）', -1));
+        }
+        if ($transaction_id==='' && $out_trade_no==='') {
+            return ApiService::ApiDataReturn(DataReturn('缺少交易号（transaction_id 或 out_trade_no 二选一）', -1));
+        }
+
+        $url = 'https://api.mch.weixin.qq.com/cgi-bin/mch/customs/customdeclarequery';
+        $params = [
+            'appid'     => $appid,
+            'mch_id'    => $mch_id,
+            'customs'   => $customs,
+            'nonce_str' => bin2hex(random_bytes(8)),
+        ];
+        if ($transaction_id!=='') { $params['transaction_id'] = $transaction_id; }
+        if ($out_trade_no!=='')   { $params['out_trade_no']   = $out_trade_no; }
+
+        $params['sign_type'] = $sign_type;
+        $signString = null;
+        $params['sign']      = $this->wxSign($params, $key_v2, $sign_type, $signString);
+
+        $xml = $this->wxArrayToXml($params);
+        $logger('INFO','2.query request xml built',['xml'=>$xml]);
+
+        $respXml = $this->wxPostXmlCurl($url, $xml, false, null, null, 30);
+        $respArr = $this->wxXmlToArray($respXml);
+        $logger('INFO','2.query response received',['raw'=>$respXml,'parsed'=>$respArr]);
+
+        $ok = isset($respArr['return_code']) && $respArr['return_code']==='SUCCESS'
+           && isset($respArr['result_code']) && $respArr['result_code']==='SUCCESS';
+
+        return ApiService::ApiDataReturn(DataReturn($ok?'查询成功':'查询失败', $ok?0:-1, $respArr));
+    }
+
+    /**
+     * =============================
+     * 以下为微信 v2 XML 工具方法
+     * =============================
+     */
+    private function wxSign(array $data, string $key, string $sign_type = 'MD5', ?string &$stringForSign = null): string
+    {
+        // 写入签名日志的函数
+        $writeSignLog = function($level, $message, $data = []) {
+            try {
+                $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
+                $timestamp = date('Y-m-d H:i:s');
+                $json_data = '';
+                if (!empty($data)) {
+                    $json_data = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+                $log_entry = sprintf("[%s] [%s] [WxSign] %s %s\n", $timestamp, strtoupper($level), $message, $json_data);
+                @file_put_contents($log_file, $log_entry, FILE_APPEND | LOCK_EX);
+            } catch (\Throwable $e) {
+                // 忽略日志写入错误
+            }
+        };
+
+        ksort($data);
+        $pairs = [];
+        foreach ($data as $k => $v) {
+            // 关键修复：排除sign、sign_type和nonce_str字段，海关申报接口nonce_str不参与签名
+            if ($v === '' || $v === null || $k === 'sign' || $k === 'sign_type' || $k === 'nonce_str') continue;
+            $pairs[] = $k.'='.$v;
+        }
+
+        // 拼接待签名字符串
+        $paramString = implode('&', $pairs);
+        $stringSignTemp = $paramString . '&key=' . $key;
+        $stringForSign = $stringSignTemp;
+
+        // 记录签名过程详细信息
+        $maskedKey = strlen($key) > 8 ? substr($key, 0, 4) . '****' . substr($key, -4) : '****';
+        $writeSignLog('INFO', '签名参数详情', [
+            'sign_type' => $sign_type,
+            'param_pairs' => $pairs,
+            'param_string' => $paramString,
+            'api_v2_key_masked' => $maskedKey,
+            'string_for_sign' => $stringSignTemp
+        ]);
+
+        // 执行签名
+        if ($sign_type === 'HMAC-SHA256') {
+            $finalSign = strtoupper(hash_hmac('sha256', $stringSignTemp, $key));
+            $writeSignLog('INFO', '最终签名结果(HMAC-SHA256)', ['final_sign' => $finalSign]);
+            return $finalSign;
+        }
+
+        $finalSign = strtoupper(md5($stringSignTemp));
+        $writeSignLog('INFO', '最终签名结果(MD5)', ['final_sign' => $finalSign]);
+        return $finalSign;
+    }
+
+    private function wxArrayToXml(array $arr): string
+    {
+        // 微信支付要求UTF-8编码，但不需要XML声明头
+        // 关键修复：XML参数顺序必须与签名字符串的ASCII字典序完全一致
+
+        $xml = '<xml>';
+
+        // 按照微信支付签名算法要求：所有参数按ASCII字典序排序
+        // 这样XML参数顺序与签名字符串顺序完全一致
+        ksort($arr);
+
+        foreach ($arr as $k => $v) {
+            // 排除sign_type和nonce_str，不输出到XML中
+            if ($k === 'sign_type' || $k === 'nonce_str') continue;
+
+            if (is_numeric($v)) {
+                $xml .= "<{$k}>{$v}</{$k}>";
+            } else {
+                // 按照微信文档要求：参数值用XML转义即可，不使用CDATA标签
+                $v = mb_convert_encoding($v, 'UTF-8', 'UTF-8');
+                $escaped_value = htmlspecialchars($v, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+                $xml .= "<{$k}>{$escaped_value}</{$k}>";
+            }
+        }
+
+        $xml .= '</xml>';
+        return $xml;
+    }
+
+    private function wxXmlToArray(string $xml): array
+    {
+        if (function_exists('libxml_disable_entity_loader') && version_compare(PHP_VERSION, '8.0.0', '<')) {
+            // 在 PHP < 8.0 中显式关闭实体加载以保证安全
+            libxml_disable_entity_loader(true);
+        }
+        $data = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NOCDATA);
+        return json_decode(json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true) ?: [];
+    }
+
+    private function wxPostXmlCurl(string $url, string $xml, bool $useCert=false, ?string $sslCertPath=null, ?string $sslKeyPath=null, int $timeout=30): string
+    {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        curl_setopt($ch, CURLOPT_HEADER, false);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $xml);
+
+        // 关键：设置正确的Content-Type头，微信支付要求text/xml格式
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: text/xml; charset=utf-8',
+            'Content-Length: ' . strlen($xml),
+            'User-Agent: Mozilla/5.0 (compatible; WeChatPay/API)',
+        ]);
+        if ($useCert && $sslCertPath && $sslKeyPath) {
+            curl_setopt($ch, CURLOPT_SSLCERTTYPE, 'PEM');
+            curl_setopt($ch, CURLOPT_SSLCERT, $sslCertPath);
+            curl_setopt($ch, CURLOPT_SSLKEYTYPE, 'PEM');
+            curl_setopt($ch, CURLOPT_SSLKEY, $sslKeyPath);
+        }
+
+        // 记录发送前的请求信息
+        try {
+            $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
+            $timestamp = date('Y-m-d H:i:s');
+            $log_entry = sprintf("[%s] [INFO] [WxPostXmlCurl] 发送请求: URL=%s, XML长度=%d, XML内容=%s\n",
+                $timestamp, $url, strlen($xml), $xml);
+            @file_put_contents($log_file, $log_entry, FILE_APPEND | LOCK_EX);
+        } catch (\Throwable $e) {
+            // 忽略日志写入错误
+        }
+
+        $data = curl_exec($ch);
+        // 参考现有logger方式记录curl响应数据
+        try {
+            $log_file = root_path('runtime/log') . 'wechat_customs_' . date('Y-m-d') . '.log';
+            $timestamp = date('Y-m-d H:i:s');
+            $response_data = ($data === false ? 'CURL_EXEC_FALSE' : $data);
+            $log_entry = sprintf("[%s] [INFO] [WxPostXmlCurl] curl response: %s\n", $timestamp, $response_data);
+            @file_put_contents($log_file, $log_entry, FILE_APPEND | LOCK_EX);
+        } catch (\Throwable $e) {
+            // 忽略日志写入错误
+        }
+        if ($data === false) {
+            $err = curl_error($ch);
+            curl_close($ch);
+            // 按照微信文档要求使用XML转义而不是CDATA
+            $escaped_err = htmlspecialchars($err, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+            return '<xml><return_code>FAIL</return_code><return_msg>'.$escaped_err.'</return_msg></xml>';
+        }
+        curl_close($ch);
+        return $data;
+    }
 
 }
 ?>
